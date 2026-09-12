@@ -3,6 +3,15 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.10] - 2026-09-13
+
+### 修复
+- 子 agent 模型商识别兼容新版 AstrBot：新版 Provider 实例的 ID 在 `meta().id`、
+  模型名走 `get_model()`，旧式直接属性读取全部失败，导致「可用的模型商列表为空」、
+  子 agent 无法派出。现抽取 `_provider_id` / `_provider_model` 跨版本兼容读取
+  （meta().id → pv.id → provider_config；get_model() → model_name → model），
+  `ruying_auto` 与 providers/agent_provider 指令均恢复可用
+
 ## [0.3.9] - 2026-09-12
 
 ### 新增（子 agent）

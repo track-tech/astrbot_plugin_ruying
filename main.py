@@ -54,7 +54,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.9"
+PLUGIN_VERSION = "0.3.10"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -81,6 +81,55 @@ from ruying_core import (  # noqa: E402
     split_ip_port,
 )
 from ruying_core import discover  # noqa: E402
+
+
+def _provider_id(pv) -> str:
+    """跨版本读取 provider 的注册表 ID。
+
+    新版 AstrBot：pv.meta().id（注册表按此 ID 回查实例，必须用它）；
+    旧版：pv.id；兜底 pv.provider_config["id"]。
+    """
+    if pv is None:
+        return ""
+    try:
+        meta = pv.meta()
+        v = meta.get("id") if isinstance(meta, dict) else getattr(meta, "id", "")
+        if v:
+            return str(v)
+    except Exception:  # noqa: BLE001
+        pass
+    v = getattr(pv, "id", "")
+    if v:
+        return str(v)
+    cfg = getattr(pv, "provider_config", None) or {}
+    try:
+        v = cfg.get("id", "") if isinstance(cfg, dict) else ""
+    except Exception:  # noqa: BLE001
+        v = ""
+    return str(v) if v else ""
+
+
+def _provider_model(pv) -> str:
+    """跨版本读取 provider 当前模型名：get_model() → model_name → model → provider_config。"""
+    if pv is None:
+        return ""
+    for getter in (
+        lambda: pv.get_model(),
+        lambda: getattr(pv, "model_name", ""),
+        lambda: getattr(pv, "model", ""),
+    ):
+        try:
+            v = getter()
+            if v:
+                return str(v)
+        except Exception:  # noqa: BLE001
+            continue
+    cfg = getattr(pv, "provider_config", None) or {}
+    try:
+        v = (cfg.get("model", "") or cfg.get("model_name", "")) if isinstance(cfg, dict) else ""
+    except Exception:  # noqa: BLE001
+        v = ""
+    return str(v) if v else ""
 
 
 def _data_dir() -> str:
@@ -905,9 +954,10 @@ class RuyingPlugin(Star):
             return []
         out = []
         for pv in provs or []:
-            pid = getattr(pv, "id", "") or ""
-            model = getattr(pv, "model", "") or ""
-            out.append((pid, model))
+            pid = _provider_id(pv)
+            if not pid:
+                continue
+            out.append((pid, _provider_model(pv)))
         return out
 
     def _resolve_subagent_provider(self, umo: str = "") -> tuple[str, str]:
@@ -924,14 +974,14 @@ class RuyingPlugin(Star):
                     pv = self.context.get_using_provider()
                 except Exception:  # noqa: BLE001
                     pv = None
-            if pv is not None and getattr(pv, "id", None):
-                return str(pv.id), ""
+            if pv is not None and _provider_id(pv):
+                return _provider_id(pv), ""
             return "", "未指定子 agent 模型，且当前会话没有可用的对话模型。"
         try:
             pv = self.context.get_provider_by_id(pid)
         except Exception:  # noqa: BLE001
             pv = None
-        if pv is None or not getattr(pv, "id", None):
+        if pv is None or not _provider_id(pv):
             avail = "、".join(p for p, _ in self._list_providers()) or "（无）"
             return "", f"找不到模型商「{pid}」。可用的有：{avail}"
         return pid, ""
@@ -980,7 +1030,7 @@ class RuyingPlugin(Star):
             pv = self.context.get_provider_by_id(arg)
         except Exception:  # noqa: BLE001
             pv = None
-        if pv is None or not getattr(pv, "id", None):
+        if pv is None or not _provider_id(pv):
             avail = "、".join(p for p, _ in self._list_providers()) or "（无）"
             yield event.plain_result(f"❌ 找不到模型商「{arg}」。可用的有：{avail}")
             return
