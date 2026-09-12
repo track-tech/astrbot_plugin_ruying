@@ -2,7 +2,7 @@ name: astrbot_plugin_ruying
 display_name: 如影
 short_desc: 让机器人通过无线 ADB 操控安卓设备——看得见屏幕、点得动界面
 desc: 如影随形。通过无线 ADB（Android 11+ 无线调试配对）把安卓设备交给机器人：LLM 可自主截屏看屏、读取界面控件坐标、点击/滑动/输入、启动应用、拉取文件，甚至执行任意 shell（可关闭）。聊天指令完成设备配对/连接/切换管理，支持多设备与默认设备，权限默认仅管理员并可配置白名单会话。
-version: 0.3.4
+version: 0.3.5
 author: track-tech
 repo: https://github.com/track-tech/astrbot_plugin_ruying
 astrbot_version: ">=4.10.4,<5"
