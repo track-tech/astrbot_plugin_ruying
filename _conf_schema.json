@@ -1,0 +1,51 @@
+{
+  "adb_path": {
+    "description": "adb 可执行文件路径",
+    "type": "string",
+    "hint": "留空或填 adb 表示使用 PATH 中的 adb。Windows 可填如 C:\\platform-tools\\adb.exe。请安装 Android platform-tools。",
+    "default": "adb"
+  },
+  "command_timeout": {
+    "description": "单条 adb 命令超时（秒）",
+    "type": "int",
+    "hint": "无线网络较差时可适当调大。",
+    "default": 20
+  },
+  "auto_reconnect": {
+    "description": "操作前自动重连已登记设备",
+    "type": "bool",
+    "hint": "设备掉线时先尝试按已存端口重连，失败后尝试通过 adb mDNS 重发现无线调试端口（Android 11+）。",
+    "default": true
+  },
+  "scan_port_5555": {
+    "description": "/如影 scan 时扫描内网 5555 端口",
+    "type": "bool",
+    "hint": "5555 是经典 adb over Wi-Fi（adb tcpip 5555）端口。Android 11+ 无线调试端口是随机的，靠 mDNS 发现，不受此项影响。内网设备极多时可关闭以加快扫描。",
+    "default": true
+  },
+  "whitelist": {
+    "description": "设备操作白名单（管理员之外额外授权）",
+    "type": "list",
+    "items": {"type": "string"},
+    "hint": "每项为 会话标识（unified_msg_origin，如 aiocqhttp:GroupMessage:12345）或纯会话 ID（如 12345）。仅影响日常操作类指令与 LLM 工具；设备配对/连接/移除等管理指令永远仅限管理员。",
+    "default": []
+  },
+  "enable_shell_tool": {
+    "description": "允许执行任意 adb shell 命令（高风险）",
+    "type": "bool",
+    "hint": "开启后 LLM 可通过 ruying_shell 工具在手机上执行任意 shell 命令（含卸载应用、删文件等不可逆操作）。仅限管理员触发。默认关闭。",
+    "default": false
+  },
+  "enable_vision": {
+    "description": "截图以图片形式直接返回给多模态模型",
+    "type": "bool",
+    "hint": "开启且模型支持视觉时，LLM 能直接看到屏幕截图进行自主操作；关闭或模型不支持视觉时，截图会直接发送到聊天窗口、LLM 仅收到文字描述。若开启后模型出现异常输出，请关闭。",
+    "default": true
+  },
+  "keep_screenshots": {
+    "description": "本地保留的历史截图数量",
+    "type": "int",
+    "hint": "截图保存在 data/plugin_data/astrbot_plugin_ruying/screens/，超出数量自动清理最旧的。",
+    "default": 10
+  }
+}
