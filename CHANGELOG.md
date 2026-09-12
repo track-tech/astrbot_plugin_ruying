@@ -3,6 +3,12 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.8] - 2026-09-12
+
+### 新增
+- `keep_downloads`（默认 20）：pull 拉取的文件自动清理，downloads 目录只保留最近 N 个，
+  与截图的 `keep_screenshots` 策略对称
+
 ## [0.3.7] - 2026-09-12
 
 ### 新增（省 token 优化）

@@ -54,7 +54,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.7"
+PLUGIN_VERSION = "0.3.8"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -313,6 +313,18 @@ class RuyingPlugin(Star):
                 for f in os.listdir(self.shot_dir)
                 if f.endswith(".png")
             ]
+            files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            for old in files[max(0, keep):]:
+                os.remove(old)
+        except OSError:
+            pass
+
+    def _cleanup_downloads(self) -> None:
+        """downloads 目录保留最近 keep_downloads 个文件（拉取文件只进不出，需兜底）。"""
+        try:
+            keep = int(self._cfg("keep_downloads", 20) or 20)
+            files = [os.path.join(self.download_dir, f) for f in os.listdir(self.download_dir)]
+            files = [f for f in files if os.path.isfile(f)]
             files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
             for old in files[max(0, keep):]:
                 os.remove(old)
@@ -819,6 +831,7 @@ class RuyingPlugin(Star):
         except AdbError as ex:
             yield event.plain_result(f"❌ {ex}")
             return
+        self._cleanup_downloads()
         sent = False
         if _HAS_FILE:
             try:
@@ -1580,6 +1593,7 @@ Args:
         except AdbError as ex:
             yield f"拉取失败：{ex}"
             return
+        self._cleanup_downloads()
         if _HAS_FILE:
             try:
                 yield event.chain_result([File(name=fname, file=local)])

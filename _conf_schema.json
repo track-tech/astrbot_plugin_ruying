@@ -71,5 +71,11 @@
     "type": "int",
     "hint": "截图保存在 data/plugin_data/astrbot_plugin_ruying/screens/，超出数量自动清理最旧的。",
     "default": 10
+  },
+  "keep_downloads": {
+    "description": "本地保留的历史拉取文件数量",
+    "type": "int",
+    "hint": "pull 拉取的文件保存在 data/plugin_data/astrbot_plugin_ruying/downloads/，超出数量自动清理最旧的。",
+    "default": 20
   }
 }

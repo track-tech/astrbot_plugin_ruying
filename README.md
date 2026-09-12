@@ -100,6 +100,7 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 | `shot_max_edge` | 720 | 回传给 LLM 的截图长边上限（0=原图），本地保留原始 PNG |
 | `shot_quality` | 70 | 回传给 LLM 的截图 JPEG 质量 |
 | `shot_dedup` | true | 无操作间隔的重复截图只回「屏幕未变化」文字，不回图 |
+| `keep_downloads` | 20 | pull 拉取文件本地保留数量，超出自动清理最旧的 |
 | `whitelist` | [] | 额外授权的会话：完整 `unified_msg_origin`（如 `aiocqhttp:GroupMessage:12345`）或纯会话 ID |
 | `enable_shell_tool` | false | 允许 LLM/指令执行任意 shell（高风险） |
 | `enable_vision` | true | 截图以图片返回给多模态模型（模型不支持时自动降级） |
