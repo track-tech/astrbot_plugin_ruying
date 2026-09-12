@@ -13,6 +13,7 @@ LLM 会自动 截屏/读控件 → 点击 → 输入 → 确认结果。
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import re
@@ -41,7 +42,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.5"
+PLUGIN_VERSION = "0.3.6"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -265,6 +266,31 @@ class RuyingPlugin(Star):
             for old in files[max(0, keep):]:
                 os.remove(old)
         except OSError:
+            pass
+
+    async def _ensure_awake(self, serial: str) -> None:
+        """屏幕熄灭时自动唤醒并尝试上滑过锁屏（尽力而为，失败不影响主操作）。
+
+        熄屏状态下截屏是纯黑图、控件 dump 也只是锁屏内容，因此屏幕相关操作前调用。
+        若设备设置了锁屏密码，唤醒后只能到锁屏页——由 LLM 看图后告知用户，无法也不应远程绕过。
+        """
+        if not bool(self._cfg("auto_wake", True)):
+            return
+        try:
+            out = await self.adb.shell(serial, "dumpsys display | grep mScreenState", timeout=10)
+            if "ON" not in out.upper():
+                await self.adb.shell(serial, "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
+                await asyncio.sleep(1.0)
+                size = await self.adb.screen_size(serial)
+                if size:
+                    w, h = size
+                    await self.adb.shell(
+                        serial, "input", "swipe",
+                        str(w // 2), str(int(h * 0.85)), str(w // 2), str(int(h * 0.35)), "250",
+                        timeout=10,
+                    )
+                await asyncio.sleep(0.5)
+        except Exception:  # noqa: BLE001 - 唤醒失败不打断主操作
             pass
 
     # ==================================================================
@@ -552,6 +578,7 @@ class RuyingPlugin(Star):
         if e:
             yield event.plain_result(f"❌ {e}")
             return
+        await self._ensure_awake(serial)
         try:
             png = await self.adb.screencap(serial)
         except AdbError as ex:
@@ -1018,6 +1045,7 @@ Args:
         if e:
             yield e
             return
+        await self._ensure_awake(serial)
         try:
             png = await self.adb.screencap(serial)
         except AdbError as ex:
@@ -1050,6 +1078,7 @@ Args:
         if e:
             yield e
             return
+        await self._ensure_awake(serial)
         try:
             xml = await self.adb.ui_dump(serial)
         except AdbError as ex:
@@ -1082,6 +1111,7 @@ Args:
         if e:
             yield e
             return
+        await self._ensure_awake(serial)
         try:
             px, py = self._int(x, "x"), self._int(y, "y")
             await self.adb.shell(serial, "input", "tap", str(px), str(py))
@@ -1117,6 +1147,7 @@ Args:
         if e:
             yield e
             return
+        await self._ensure_awake(serial)
         try:
             vals = [self._int(v, n) for v, n in ((x1, "x1"), (y1, "y1"), (x2, "x2"), (y2, "y2"))]
             dur = max(50, self._int(duration_ms, "duration_ms"))
@@ -1143,6 +1174,7 @@ Args:
         if e:
             yield e
             return
+        await self._ensure_awake(serial)
         try:
             yield await self._input_text(serial, str(text))
         except AdbError as ex:
@@ -1239,6 +1271,7 @@ Args:
         if e:
             yield e
             return
+        await self._ensure_awake(serial)
         try:
             pkg = await self._resolve_package(serial, str(app or ""))
             if not pkg:

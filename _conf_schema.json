@@ -17,6 +17,12 @@
     "hint": "设备掉线时先尝试按已存端口重连，失败后尝试通过 adb mDNS 重发现无线调试端口（Android 11+）。",
     "default": true
   },
+  "auto_wake": {
+    "description": "截屏/看控件/触控前自动唤醒熄屏的设备",
+    "type": "bool",
+    "hint": "熄屏时截屏是纯黑图。开启后这些操作前会检测屏幕状态，熄灭则唤醒并尝试上滑过锁屏；设置了锁屏密码的设备只能唤醒到锁屏页（无法也不应远程绕过密码）。",
+    "default": true
+  },
   "scan_port_5555": {
     "description": "/如影 scan 时扫描内网 5555 端口",
     "type": "bool",

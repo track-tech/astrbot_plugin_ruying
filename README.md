@@ -94,6 +94,7 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 | `command_timeout` | 20 | 单条 adb 命令超时（秒） |
 | `auto_reconnect` | true | 操作前自动重连（含 mDNS 端口重发现） |
 | `scan_port_5555` | true | `/如影 scan` 时是否扫描内网 5555 端口（老设备） |
+| `auto_wake` | true | 截屏/看控件/触控前自动唤醒熄屏的设备（上滑尝试过锁屏；有密码只能到锁屏页） |
 | `whitelist` | [] | 额外授权的会话：完整 `unified_msg_origin`（如 `aiocqhttp:GroupMessage:12345`）或纯会话 ID |
 | `enable_shell_tool` | false | 允许 LLM/指令执行任意 shell（高风险） |
 | `enable_vision` | true | 截图以图片返回给多模态模型（模型不支持时自动降级） |
@@ -110,7 +111,7 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 - **中文输入不动？** `adb shell input text` 系统限制只支持 ASCII。方案：手机安装 [ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard) 输入法并启用，插件会自动检测并改用广播输入。
 - **重启手机/重开无线调试后连不上？** 端口变了。保持 `auto_reconnect` 开启（mDNS 自动重发现），或重新 `/如影 connect`。
 - **`ruying_get_ui` 返回空元素？** 目标应用禁止辅助功能读取（游戏、部分视频页）。改用 `ruying_screenshot` 让模型按截图估算坐标。
-- **截图一片黑？** 部分应用（银行/视频 DRM）禁止截屏，系统层面限制。
+- **截图一片黑？** 熄屏导致的黑屏已由 `auto_wake` 自动处理（v0.3.6 起）；剩余场景是部分应用（银行/视频 DRM）主动禁止截屏，属系统层面限制。
 - **改了 adb_path 还是报「找不到 adb：adb」？** 生效时机分三种：① WebUI 插件配置里修改并保存 → **立即生效**（v0.3.4 起惰性读取，无需重载）；② 手改配置文件（data/config/xxx_config.json）→ 需重载插件；③ 若重载发生在**同一轮对话进行中**，该轮使用的工具集在开始时已快照、仍指向旧插件实例（AstrBot 核心层行为），新开一轮对话即恢复。
 - **模型看不到截图？** 需要同时满足：`enable_vision` 开启 + 使用多模态模型 + AstrBot 版本支持工具图片注入。不满足时自动降级为“图片发给用户 + 文字给模型”。
 
