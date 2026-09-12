@@ -23,11 +23,14 @@ def png_dimensions(data: bytes) -> Optional[tuple[int, int]]:
     return None
 
 
-def parse_ui_hierarchy(xml_text: str, max_lines: int = 90) -> dict:
+def parse_ui_hierarchy(xml_text: str, max_lines: int = 90, filter_kw: str = "") -> dict:
     """解析 uiautomator dump 的 XML，产出适合 LLM 阅读的紧凑元素列表。
 
     仅保留 可点击 / 有文本 / 有 content-desc 的节点，避免输出冗长无用的
     布局容器；坐标为元素中心点（可直接用于 input tap）。
+
+    filter_kw：按 文本/描述/资源ID 包含匹配（不区分大小写）预先过滤，
+    用于在元素极多的界面上只取相关子集；max_lines 控制输出行数上限。
     """
     result: dict = {"screen": None, "lines": [], "elements": [], "error": None}
     try:
@@ -35,6 +38,8 @@ def parse_ui_hierarchy(xml_text: str, max_lines: int = 90) -> dict:
     except ET.ParseError as e:
         result["error"] = f"界面数据不是有效 XML（{e}）"
         return result
+
+    kw = (filter_kw or "").strip().lower()
 
     def bounds_center(b: str) -> Optional[tuple[int, int, int, int]]:
         m = BOUNDS_RE.search(b or "")
@@ -69,6 +74,9 @@ def parse_ui_hierarchy(xml_text: str, max_lines: int = 90) -> dict:
         if key in seen_bounds:
             continue
         seen_bounds.add(key)
+
+        if kw and kw not in text.lower() and kw not in desc.lower() and kw not in rid.lower():
+            continue
 
         parts = [f"({cx},{cy})"]
         if clickable:

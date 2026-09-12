@@ -3,6 +3,25 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.7] - 2026-09-12
+
+### 新增（省 token 优化）
+- 截图回传压缩：默认降采样为长边 720 的 JPEG（质量 70）回传给 LLM，本地保留原始 PNG；
+  真机实测 1080x2376 截图从 4.6MB PNG 降至 58KB JPEG（-99%）。新增配置
+  `shot_max_edge` / `shot_quality`，工具参数 `max_edge` / `quality` / `region` 可临时覆盖
+- 截图去重 `shot_dedup`：无操作间隔内重复截图且内容未变时只回文字「屏幕未变化」，`force=true` 强制回图
+- `ruying_screenshot` 新增 `digest=true`：不回图，只返回界面元素文字摘要
+- 新增原子工具 `ruying_tap_and_wait`：点击后轮询界面至稳定，返回变化摘要（新增/消失元素），
+  替代「点击→截屏→看图」
+- 新增原子工具 `ruying_wait_for`：轮询等待指定文字/资源 ID 出现，替代反复截图轮询
+- `ruying_get_ui` 参数化：`max_nodes`（默认 60）数量上限、`filter_kw` 关键词过滤
+
+### 优化
+- 触控/输入/启动/按键/shell 操作后记录操作标记，配合截图去重
+
+### 依赖
+- 新增 `Pillow`（AstrBot 核心自带；缺失时截图降级回传原 PNG，功能不受影响）
+
 ## [0.3.6] - 2026-09-12
 
 ### 新增

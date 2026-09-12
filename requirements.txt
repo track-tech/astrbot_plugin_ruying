@@ -2,3 +2,6 @@
 # zeroconf 用于 /如影 scan 直查 Android 11+ 无线调试的 mDNS 广播（强烈建议安装；
 # 缺失时扫描自动降级为 adb mdns services + 5555 端口扫描）。
 zeroconf>=0.130.0
+# Pillow 用于把回传给 LLM 的截图降采样压缩为 JPEG（大幅节省视觉 token）；
+# AstrBot 核心已自带，此处显式声明。缺失时自动降级回传原始 PNG。
+Pillow>=10.0

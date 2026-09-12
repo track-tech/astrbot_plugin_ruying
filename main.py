@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import io
 import os
 import re
 import sys
@@ -23,6 +25,16 @@ import time
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
+
+# Pillow 用于把回传给 LLM 的截图压缩为降采样 JPEG（大幅省 token）。
+# AstrBot 核心自带 Pillow；缺失时降级回传原 PNG，不影响功能。
+try:
+    from PIL import Image
+
+    _HAS_PILLOW = True
+except ImportError:  # pragma: no cover
+    Image = None
+    _HAS_PILLOW = False
 
 # mcp.types 由 AstrBot 核心自带；存在时截图可作为 ImageContent 返回给多模态 LLM
 try:
@@ -42,7 +54,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.6"
+PLUGIN_VERSION = "0.3.7"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -81,14 +93,14 @@ def _data_dir() -> str:
         return os.path.join("data", "plugin_data", PLUGIN_NAME)
 
 
-def _png_tool_result(png: bytes, caption: str):
+def _image_tool_result(data: bytes, mime: str, caption: str):
     """把截图包装成 CallToolResult：LLM 可直接看到图片 + 文字说明。"""
     return _mcp_types.CallToolResult(
         content=[
             _mcp_types.ImageContent(
                 type="image",
-                data=base64.b64encode(png).decode("ascii"),
-                mimeType="image/png",
+                data=base64.b64encode(data).decode("ascii"),
+                mimeType=mime,
             ),
             _mcp_types.TextContent(type="text", text=caption),
         ]
@@ -115,6 +127,9 @@ class RuyingPlugin(Star):
         os.makedirs(self.shot_dir, exist_ok=True)
         os.makedirs(self.download_dir, exist_ok=True)
         self.store = DeviceRegistry(os.path.join(self.data_dir, "devices.json"))
+        # 截图去重与操作计数（按设备 serial）
+        self._shot_state: dict[str, dict] = {}
+        self._ops_since_shot: dict[str, int] = {}
         logger.info(f"[如影] 插件已加载，数据目录：{self.data_dir}")
 
     async def terminate(self):
@@ -242,6 +257,42 @@ class RuyingPlugin(Star):
         # mDNS 重发现可能更新了端口，以最新注册信息为准
         serial = f"{dev['ip']}:{int(dev['port'])}"
         return serial, ""
+
+    # ------------------------------------------------------------------
+    # 截图压缩与去重
+    # ------------------------------------------------------------------
+    def _compress_for_llm(self, png: bytes, max_edge: int, quality: int, region: str = "") -> tuple[bytes, str]:
+        """把原始 PNG 处理成回传给 LLM 的图片：裁剪 region → 长边缩放 → JPEG。
+
+        返回 (图像字节, mime)。Pillow 缺失或处理异常时原样返回 PNG（功能不降级，只是费 token）。
+        """
+        if not _HAS_PILLOW:
+            return png, "image/png"
+        try:
+            img = Image.open(io.BytesIO(png))
+            if region:
+                parts = [int(x) for x in re.split(r"[,,，xX*]", region) if x.strip()]
+                if len(parts) == 4:
+                    x0, y0, x1, y1 = parts
+                    x0, x1 = sorted((max(0, min(x0, img.width)), max(0, min(x1, img.width))))
+                    y0, y1 = sorted((max(0, min(y0, img.height)), max(0, min(y1, img.height))))
+                    if x1 > x0 and y1 > y0:
+                        img = img.crop((x0, y0, x1, y1))
+            if max_edge and max(img.size) > max_edge:
+                ratio = max_edge / max(img.size)
+                img = img.resize(
+                    (max(1, round(img.width * ratio)), max(1, round(img.height * ratio))),
+                    Image.LANCZOS,
+                )
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, "JPEG", quality=max(1, min(95, quality)), optimize=True)
+            return buf.getvalue(), "image/jpeg"
+        except Exception:  # noqa: BLE001
+            return png, "image/png"
+
+    def _mark_op(self, serial: str) -> None:
+        """记录一次可能改变屏幕的操作，使下次截图不触发去重。"""
+        self._ops_since_shot[serial] = self._ops_since_shot.get(serial, 0) + 1
 
     # ------------------------------------------------------------------
     # 截图存储
@@ -1032,10 +1083,24 @@ class RuyingPlugin(Star):
             raise AdbError(f"参数 {name} 不是有效数字：{val!r}")
 
     @filter.llm_tool(name="ruying_screenshot")
-    async def tool_screenshot(self, event: AstrMessageEvent, device: str = ""):
-        """截取安卓设备当前屏幕并返回截图。若你是多模态模型将直接看到屏幕内容；需要精确控件坐标请再调用 ruying_get_ui。
+    async def tool_screenshot(
+        self,
+        event: AstrMessageEvent,
+        max_edge: float = -1,
+        quality: float = -1,
+        region: str = "",
+        digest: bool = False,
+        force: bool = False,
+        device: str = "",
+    ):
+        """截取安卓设备当前屏幕。默认返回降采样 JPEG（长边 720、质量 70）以节省 token，本地保留原始 PNG；多模态模型可直接看到图片。省 token 优先级：digest=true > region 局部截图 > 默认全屏压缩；屏幕内容未变化时会只返回文字。
 
 Args:
+        max_edge(number): 回传图片长边上限（像素），0=原图，-1=使用插件配置默认值（默认 -1）
+        quality(number): JPEG 压缩质量 1-95，-1=使用插件配置默认值（默认 -1）
+        region(string): 只截取指定区域，格式 "x1,y1,x2,y2"（屏幕原始坐标），留空为全屏
+        digest(boolean): true 时不回传图片，只返回当前界面的可交互元素与文字摘要，最省 token（默认 false）
+        force(boolean): true 时跳过「屏幕未变化」去重，强制回传图片（默认 false）
         device(string): 设备别名或 IP:端口，留空使用默认设备
     """
         if err := self._guard_tool(event):
@@ -1046,29 +1111,75 @@ Args:
             yield e
             return
         await self._ensure_awake(serial)
+
+        # digest：不回图，只回界面元素文字摘要
+        if digest:
+            try:
+                xml = await self.adb.ui_dump(serial)
+            except AdbError as ex:
+                yield f"获取界面摘要失败：{ex}"
+                return
+            parsed = parse_ui_hierarchy(xml)
+            if parsed.get("screen"):
+                size = await self.adb.screen_size(serial)
+                if size:
+                    parsed["screen"] = size
+            yield "（digest 模式：无图片）当前界面：\n" + format_ui_text(parsed)
+            return
+
         try:
             png = await self.adb.screencap(serial)
         except AdbError as ex:
             yield f"截图失败：{ex}"
             return
+
+        me = int(max_edge) if max_edge is not None and max_edge >= 0 else int(self._cfg("shot_max_edge", 720) or 0)
+        q = int(quality) if quality is not None and quality >= 0 else int(self._cfg("shot_quality", 70) or 70)
+        data, mime = self._compress_for_llm(png, me, q, str(region or ""))
+
+        # 去重：期间无操作且压缩后指纹一致 → 只回文字
+        fp = hashlib.sha256(data).hexdigest()[:16]
+        st = self._shot_state.get(serial)
+        if (
+            not force
+            and bool(self._cfg("shot_dedup", True))
+            and st and st.get("fp") == fp
+            and self._ops_since_shot.get(serial, 0) == 0
+        ):
+            yield (
+                "屏幕未变化：与上一次回传的截图内容完全一致（期间无任何操作），不再重复回图。"
+                "如需强制回图请传 force=true。"
+            )
+            return
+        self._shot_state[serial] = {"fp": fp}
+        self._ops_since_shot[serial] = 0
+
         path = self._save_screenshot(png)
         dims = png_dimensions(png)
         size_txt = f"{dims[0]}x{dims[1]}" if dims else "未知"
         caption = (
-            f"截图成功，分辨率 {size_txt}，本地文件 {path}。"
-            "如需可点击元素的精确坐标，请调用 ruying_get_ui。"
+            f"截图成功，原始分辨率 {size_txt}，回传为 {mime.split('/')[-1].upper()}。"
+            "需要可点击元素的精确坐标请调用 ruying_get_ui；点击后确认结果请用 ruying_tap_and_wait。"
         )
         if self._vision_enabled():
-            yield _png_tool_result(png, caption)
+            yield _image_tool_result(data, mime, caption)
         else:
             yield event.image_result(path)
             yield caption
 
     @filter.llm_tool(name="ruying_get_ui")
-    async def tool_get_ui(self, event: AstrMessageEvent, device: str = ""):
-        """获取安卓设备当前屏幕的界面层级：屏幕分辨率与可点击/含文本元素的坐标、文字、资源 ID，用于确定点击或滑动的位置。看不懂界面内容时配合 ruying_screenshot 使用。
+    async def tool_get_ui(
+        self,
+        event: AstrMessageEvent,
+        max_nodes: float = 60,
+        filter_kw: str = "",
+        device: str = "",
+    ):
+        """获取安卓设备当前屏幕的界面层级：屏幕分辨率与可点击/含文本元素的坐标、文字、资源 ID，用于确定点击或滑动的位置。元素很多时可用 filter_kw 只取相关子集；看不懂界面内容时配合 ruying_screenshot 使用。
 
 Args:
+        max_nodes(number): 最多返回的元素条数（默认 60）
+        filter_kw(string): 关键词过滤——只返回 文本/描述/资源ID 包含该关键词 的元素，留空不过滤
         device(string): 设备别名或 IP:端口，留空使用默认设备
     """
         if err := self._guard_tool(event):
@@ -1084,7 +1195,7 @@ Args:
         except AdbError as ex:
             yield f"获取界面层级失败：{ex}"
             return
-        parsed = parse_ui_hierarchy(xml)
+        parsed = parse_ui_hierarchy(xml, max_lines=int(max_nodes or 60), filter_kw=str(filter_kw or ""))
         if parsed.get("error"):
             yield f"解析界面数据失败：{parsed['error']}"
             return
@@ -1093,7 +1204,10 @@ Args:
                 parsed["screen"] = await self.adb.screen_size(serial)
             except AdbError:
                 pass
-        yield format_ui_text(parsed)
+        text = format_ui_text(parsed)
+        if str(filter_kw or "").strip() and parsed["elements"]:
+            text = f"（已按关键词「{filter_kw}」过滤）\n" + text
+        yield text
 
     @filter.llm_tool(name="ruying_tap")
     async def tool_tap(self, event: AstrMessageEvent, x: float = 0, y: float = 0, device: str = ""):
@@ -1115,6 +1229,7 @@ Args:
         try:
             px, py = self._int(x, "x"), self._int(y, "y")
             await self.adb.shell(serial, "input", "tap", str(px), str(py))
+            self._mark_op(serial)
             yield f"已点击 ({px},{py})。可用 ruying_screenshot 确认结果。"
         except AdbError as ex:
             yield f"点击失败：{ex}"
@@ -1152,6 +1267,7 @@ Args:
             vals = [self._int(v, n) for v, n in ((x1, "x1"), (y1, "y1"), (x2, "x2"), (y2, "y2"))]
             dur = max(50, self._int(duration_ms, "duration_ms"))
             await self.adb.shell(serial, "input", "swipe", *[str(v) for v in vals], str(dur))
+            self._mark_op(serial)
             yield f"已滑动 ({vals[0]},{vals[1]}) → ({vals[2]},{vals[3]})，用时 {dur}ms。"
         except AdbError as ex:
             yield f"滑动失败：{ex}"
@@ -1176,9 +1292,157 @@ Args:
             return
         await self._ensure_awake(serial)
         try:
-            yield await self._input_text(serial, str(text))
+            result = await self._input_text(serial, str(text))
+            self._mark_op(serial)
+            yield result
         except AdbError as ex:
             yield f"输入失败：{ex}"
+
+    @filter.llm_tool(name="ruying_tap_and_wait")
+    async def tool_tap_and_wait(
+        self,
+        event: AstrMessageEvent,
+        x: float = 0,
+        y: float = 0,
+        timeout: float = 5000,
+        device: str = "",
+    ):
+        """点击坐标并轮询等待界面稳定（连续两次界面层级一致），直接返回点击后的界面摘要与变化（新增/消失的元素），全程无图片。确认点击结果的优先选择，替代「点击→截屏→看图」，大幅节省 token。
+
+Args:
+        x(number): 横向坐标（像素）
+        y(number): 纵向坐标（像素）
+        timeout(number): 等待界面稳定的总时长（毫秒，默认 5000）
+        device(string): 设备别名或 IP:端口，留空使用默认设备
+    """
+        if err := self._guard_tool(event):
+            yield err
+            return
+        serial, e = await self._tool_serial(device)
+        if e:
+            yield e
+            return
+        await self._ensure_awake(serial)
+        try:
+            px, py = self._int(x, "x"), self._int(y, "y")
+            await self.adb.shell(serial, "input", "tap", str(px), str(py))
+            self._mark_op(serial)
+        except AdbError as ex:
+            yield f"点击失败：{ex}"
+            return
+
+        def sig(parsed):
+            return sorted(
+                (el["text"], el["desc"], el["id"]) for el in parsed.get("elements", [])
+            )
+
+        try:
+            pre = parse_ui_hierarchy(await self.adb.ui_dump(serial))
+        except AdbError as ex:
+            yield f"点击成功，但获取点击前界面失败：{ex}"
+            return
+        pre_set = set(sig(pre))
+
+        deadline = time.monotonic() + max(1000, self._int(timeout, "timeout")) / 1000
+        last_parsed = pre
+        stable = 0
+        prev_sig = None
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.4)
+            try:
+                parsed = parse_ui_hierarchy(await self.adb.ui_dump(serial))
+            except AdbError as ex:
+                yield f"点击成功，但等待界面时读取失败：{ex}"
+                return
+            s = sig(parsed)
+            if parsed.get("error"):
+                continue
+            stable = stable + 1 if s == prev_sig else 1
+            prev_sig = s
+            last_parsed = parsed
+            if stable >= 2:
+                break
+
+        post_set = set(sig(last_parsed))
+        added = sorted(post_set - pre_set)
+        removed = sorted(pre_set - post_set)
+
+        def locate(triple):
+            t, d, i = triple
+            name = t or d or i or "(无文本)"
+            el = next(
+                (el for el in last_parsed["elements"] if (el["text"], el["desc"], el["id"]) == triple),
+                None,
+            )
+            return f"「{name}」({el['x']},{el['y']})" if el else f"「{name}」"
+
+        if not added and not removed:
+            yield f"已点击 ({px},{py})，界面未发生变化（无新增/消失元素）。当前界面：\n" + format_ui_text(last_parsed)
+            return
+        parts = [f"已点击 ({px},{py})，界面已变化。"]
+        if added:
+            parts.append("新增元素：" + "；".join(locate(t) for t in added[:10]))
+        if removed:
+            parts.append("消失元素：" + "；".join(
+                f"「{t or d or i or '(无文本)'}」" for t, d, i in removed[:10]
+            ))
+        yield " ".join(parts) + "\n当前界面：\n" + format_ui_text(last_parsed)
+
+    @filter.llm_tool(name="ruying_wait_for")
+    async def tool_wait_for(
+        self,
+        event: AstrMessageEvent,
+        keyword: str = "",
+        timeout: float = 5000,
+        device: str = "",
+    ):
+        """轮询设备界面，等待出现 文本/描述/资源ID 包含指定关键词 的元素（如等待页面加载完成、按钮出现），出现即返回匹配元素及其坐标，全程无图片。替代反复截图轮询。
+
+Args:
+        keyword(string): 要等待出现的关键词（匹配 文本/描述/资源ID，如「登录」、"com.x:id/btn_ok"）
+        timeout(number): 最长等待时间（毫秒，默认 5000）
+        device(string): 设备别名或 IP:端口，留空使用默认设备
+    """
+        if err := self._guard_tool(event):
+            yield err
+            return
+        kw = str(keyword or "").strip()
+        if not kw:
+            yield "未提供要等待的关键词。"
+            return
+        serial, e = await self._tool_serial(device)
+        if e:
+            yield e
+            return
+        await self._ensure_awake(serial)
+
+        deadline = time.monotonic() + max(1000, self._int(timeout, "timeout")) / 1000
+        last_parsed = None
+        while True:
+            try:
+                parsed = parse_ui_hierarchy(
+                    await self.adb.ui_dump(serial), filter_kw=kw
+                )
+            except AdbError as ex:
+                yield f"等待界面时读取失败：{ex}"
+                return
+            last_parsed = parsed
+            if parsed.get("elements"):
+                hits = parsed["elements"][:8]
+                lines = [
+                    f"({el['x']},{el['y']}) 文本={el['text']!r} 描述={el['desc']!r} id={el['id']!r}"
+                    + (" [可点]" if el["clickable"] else "")
+                    for el in hits
+                ]
+                yield f"已出现「{kw}」（匹配 {len(parsed['elements'])} 个）：\n" + "\n".join(lines)
+                return
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(0.6)
+        yield (
+            f"等待超时（{self._int(timeout, 'timeout') / 1000:.1f}s）：界面上未出现「{kw}」。"
+            "可用 ruying_get_ui 查看当前界面元素，或 ruying_screenshot 看屏。"
+        )
 
     @filter.llm_tool(name="ruying_press_key")
     async def tool_press_key(self, event: AstrMessageEvent, key: str = "", device: str = ""):
@@ -1202,6 +1466,7 @@ Args:
             return
         try:
             await self.adb.shell(serial, "input", "keyevent", keycode)
+            self._mark_op(serial)
             yield f"已按键 {k}。"
         except AdbError as ex:
             yield f"按键失败：{ex}"
@@ -1281,6 +1546,7 @@ Args:
                 )
                 return
             out = await self.adb.launch_app(serial, pkg)
+            self._mark_op(serial)
             if "error" in out.lower() or "no activities" in out.lower():
                 yield f"启动 {pkg} 失败：{out[:200]}"
             else:
@@ -1345,6 +1611,7 @@ Args:
             return
         try:
             out = await self.adb.shell(serial, cmd, timeout=max(30, self.adb.default_timeout))
+            self._mark_op(serial)
         except AdbError as ex:
             yield f"执行失败：{ex}"
             return

@@ -77,8 +77,10 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 
 日常使用**不需要记指令**：开启函数调用后，LLM 会自主组合以下工具完成任务（名称带 `ruying_` 前缀）：
 
-- `ruying_screenshot` —— 截屏。配置 `enable_vision` 开启且模型支持视觉时，截图直接注入 LLM 上下文，模型“看着屏幕”操作；否则截图发送到会话、模型收到文字说明。
-- `ruying_get_ui` —— 读取当前界面可交互元素的**精确坐标/文字/资源 ID**（uiautomator）。这是点击定位的首选。
+- `ruying_screenshot` —— 截屏。默认降采样为长边 720 的 JPEG 回传给模型（本地保留原始 PNG），支持 `region` 局部截图、`digest` 纯文字摘要、无变化自动去重；配置 `enable_vision` 开启且模型支持视觉时图片直接注入 LLM 上下文。
+- `ruying_get_ui` —— 读取当前界面可交互元素的**精确坐标/文字/资源 ID**（uiautomator），支持 `max_nodes` 数量上限与 `filter_kw` 关键词过滤。这是点击定位的首选。
+- `ruying_tap_and_wait` —— 点击后轮询等待界面稳定，直接返回变化摘要（新增/消失元素）与当前界面，**无需再截图**。
+- `ruying_wait_for` —— 轮询等待指定文字/资源 ID 出现（如页面加载完成），出现即返回，**替代反复截图**。
 - `ruying_tap` / `ruying_swipe` / `ruying_input_text` / `ruying_press_key` —— 触控与输入。
 - `ruying_current_app` / `ruying_list_apps` / `ruying_launch_app` —— 应用查询与启动。
 - `ruying_pull_file` —— 从设备拉取文件发送到会话。
@@ -95,6 +97,9 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 | `auto_reconnect` | true | 操作前自动重连（含 mDNS 端口重发现） |
 | `scan_port_5555` | true | `/如影 scan` 时是否扫描内网 5555 端口（老设备） |
 | `auto_wake` | true | 截屏/看控件/触控前自动唤醒熄屏的设备（上滑尝试过锁屏；有密码只能到锁屏页） |
+| `shot_max_edge` | 720 | 回传给 LLM 的截图长边上限（0=原图），本地保留原始 PNG |
+| `shot_quality` | 70 | 回传给 LLM 的截图 JPEG 质量 |
+| `shot_dedup` | true | 无操作间隔的重复截图只回「屏幕未变化」文字，不回图 |
 | `whitelist` | [] | 额外授权的会话：完整 `unified_msg_origin`（如 `aiocqhttp:GroupMessage:12345`）或纯会话 ID |
 | `enable_shell_tool` | false | 允许 LLM/指令执行任意 shell（高风险） |
 | `enable_vision` | true | 截图以图片返回给多模态模型（模型不支持时自动降级） |

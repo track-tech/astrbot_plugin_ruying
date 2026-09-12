@@ -23,6 +23,24 @@
     "hint": "熄屏时截屏是纯黑图。开启后这些操作前会检测屏幕状态，熄灭则唤醒并尝试上滑过锁屏；设置了锁屏密码的设备只能唤醒到锁屏页（无法也不应远程绕过密码）。",
     "default": true
   },
+  "shot_max_edge": {
+    "description": "回传给 LLM 的截图长边上限（像素）",
+    "type": "int",
+    "hint": "0=原图。仅影响回传给模型的图片，本地保留原始 PNG。720 足够看清界面且大幅节省视觉 token，LLM 也可在调用时用 max_edge 参数临时覆盖。",
+    "default": 720
+  },
+  "shot_quality": {
+    "description": "回传给 LLM 的截图 JPEG 质量",
+    "type": "int",
+    "hint": "1-95，默认 70。仅影响回传给模型的图片。",
+    "default": 70
+  },
+  "shot_dedup": {
+    "description": "重复截图去重",
+    "type": "bool",
+    "hint": "开启后，两次截图之间若无任何操作且屏幕内容未变，第二次只返回文字「屏幕未变化」不回图（LLM 可用 force=true 强制回图）。",
+    "default": true
+  },
   "scan_port_5555": {
     "description": "/如影 scan 时扫描内网 5555 端口",
     "type": "bool",
