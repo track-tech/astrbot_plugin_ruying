@@ -54,7 +54,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.8"
+PLUGIN_VERSION = "0.3.9"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -383,7 +383,23 @@ class RuyingPlugin(Star):
 /如影 pull <设备内路径> —— 拉取文件
 /如影 shell <命令> —— 任意 shell（默认关闭，仅管理员）
 
+【子 agent · 仅管理员】
+/如影 providers —— 列出可用模型商与当前子 agent 模型
+/如影 agent_provider <模型商ID|清空> —— 指定子 agent 使用的模型（默认跟随会话）
+
 💡 也可以直接用自然语言让我操作手机，例如「帮我在手机上打开微信」。"""
+
+    SUBAGENT_INSTRUCTION = (
+        "你是「如影」，负责操控用户的安卓设备完成多步任务，像一个影子一样替用户看屏和操作。\n"
+        "守则：\n"
+        "1. 动手前先用 ruying_get_ui（省 token，优先）或 ruying_screenshot 了解界面，不要凭空猜测坐标。\n"
+        "2. 点击后用 ruying_tap_and_wait 确认结果，不要额外截图。\n"
+        "3. 截图仅在视觉信息不可替代时使用（验证码、图片、看不清的文字），且默认用压缩参数。\n"
+        "4. 熄屏会自动唤醒；若截到锁屏页，说明设备已锁屏，告知用户需要解锁，绝不尝试绕过。\n"
+        "5. 中文输入需要设备装有 ADBKeyboard 输入法，不可用时直接告知用户，不要反复尝试。\n"
+        "6. 任意 shell 是最后手段，仅在普通工具无法完成时使用。\n"
+        "7. 完成后用一两句话总结做了什么和结果，不要贴大段中间输出。"
+    )
 
     @filter.command("如影", alias={"ruying"})
     async def ruying_cmd(self, event: AstrMessageEvent):
@@ -448,6 +464,12 @@ class RuyingPlugin(Star):
                 yield r
         elif sub == "shell":
             async for r in self._cmd_shell(event, rest):
+                yield r
+        elif sub == "providers":
+            async for r in self._cmd_providers(event):
+                yield r
+        elif sub == "agent_provider":
+            async for r in self._cmd_agent_provider(event, rest):
                 yield r
         else:
             yield event.plain_result(f"未知的子命令「{sub}」。\n\n{self.HELP_TEXT}")
@@ -872,6 +894,103 @@ class RuyingPlugin(Star):
         yield event.plain_result(f"$ {cmd}\n{out or '（无输出）'}")
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 子 agent（模型可从已配置的模型商中选择）
+    # ------------------------------------------------------------------
+    def _list_providers(self) -> list[tuple[str, str]]:
+        """返回可用的文本生成模型商 [(id, 模型名)]。"""
+        try:
+            provs = self.context.get_all_providers()
+        except Exception:  # noqa: BLE001
+            return []
+        out = []
+        for pv in provs or []:
+            pid = getattr(pv, "id", "") or ""
+            model = getattr(pv, "model", "") or ""
+            out.append((pid, model))
+        return out
+
+    def _resolve_subagent_provider(self, umo: str = "") -> tuple[str, str]:
+        """解析子 agent 使用的 provider id；返回 (provider_id, 错误信息)。
+
+        配置了 subagent_provider_id 时用之；否则跟随会话当前模型。
+        """
+        pid = str(self._cfg("subagent_provider_id", "") or "").strip()
+        if not pid:
+            try:
+                pv = self.context.get_using_provider(umo or None)
+            except Exception:  # noqa: BLE001
+                try:
+                    pv = self.context.get_using_provider()
+                except Exception:  # noqa: BLE001
+                    pv = None
+            if pv is not None and getattr(pv, "id", None):
+                return str(pv.id), ""
+            return "", "未指定子 agent 模型，且当前会话没有可用的对话模型。"
+        try:
+            pv = self.context.get_provider_by_id(pid)
+        except Exception:  # noqa: BLE001
+            pv = None
+        if pv is None or not getattr(pv, "id", None):
+            avail = "、".join(p for p, _ in self._list_providers()) or "（无）"
+            return "", f"找不到模型商「{pid}」。可用的有：{avail}"
+        return pid, ""
+
+    async def _cmd_providers(self, event: AstrMessageEvent):
+        if err := self._admin_denied(event):
+            yield event.plain_result(err)
+            return
+        provs = self._list_providers()
+        current = str(self._cfg("subagent_provider_id", "") or "").strip()
+        lines = ["🧠 可用模型商："]
+        for pid, model in provs:
+            mark = "★" if pid == current else "　"
+            lines.append(f"{mark} {pid}（{model}）" if model else f"{mark} {pid}")
+        if not provs:
+            lines.append("  （未配置任何对话模型商）")
+        lines.append(
+            "\n当前子 agent 模型：" + (current if current else "跟随会话（使用会话当前模型）")
+        )
+        lines.append("/如影 agent_provider <模型商ID> 指定；/如影 agent_provider 清空 恢复跟随会话。")
+        yield event.plain_result("\n".join(lines))
+
+    async def _cmd_agent_provider(self, event: AstrMessageEvent, rest: str):
+        if err := self._admin_denied(event):
+            yield event.plain_result(err)
+            return
+        arg = rest.strip()
+        if not arg:
+            current = str(self._cfg("subagent_provider_id", "") or "").strip()
+            yield event.plain_result(
+                f"当前子 agent 模型：{current or '跟随会话'}\n"
+                f"用法：/如影 agent_provider <模型商ID>（/如影 providers 查看列表；"
+                f"参数为「清空」时恢复跟随会话）"
+            )
+            return
+        if arg in ("清空", "跟随", "默认"):
+            self.config["subagent_provider_id"] = ""
+            try:
+                self.config.save_config()
+            except Exception:  # noqa: BLE001
+                pass
+            yield event.plain_result("✅ 子 agent 模型已恢复为跟随会话。")
+            return
+        # 校验目标 provider 存在
+        try:
+            pv = self.context.get_provider_by_id(arg)
+        except Exception:  # noqa: BLE001
+            pv = None
+        if pv is None or not getattr(pv, "id", None):
+            avail = "、".join(p for p, _ in self._list_providers()) or "（无）"
+            yield event.plain_result(f"❌ 找不到模型商「{arg}」。可用的有：{avail}")
+            return
+        self.config["subagent_provider_id"] = arg
+        try:
+            self.config.save_config()
+        except Exception:  # noqa: BLE001
+            pass
+        yield event.plain_result(f"✅ 子 agent 模型已设为 {arg}。")
+
     # 内部共用
     # ------------------------------------------------------------------
     async def _input_text(self, serial: str, text: str) -> str:
@@ -1632,6 +1751,75 @@ Args:
         if len(out) > 4000:
             out = out[:4000] + f"\n……（输出过长已截断，共 {len(out)} 字符）"
         yield f"$ {cmd}\n{out or '（命令执行完成，无输出）'}"
+
+    @filter.llm_tool(name="ruying_auto")
+    async def tool_auto(self, event: AstrMessageEvent, task: str = "", device: str = ""):
+        """把一个需要多步操作的安卓设备任务交给「如影」子 agent 自主完成（它会看屏、点击、输入并自己确认结果），只返回最终结果。适用于无法一步完成的复杂任务，例如「打开B站搜索如影并进入第一个视频」「在设置里打开开发者选项」。单步操作（仅截图/仅点一下）请不要用本工具，直接用对应工具即可。
+
+Args:
+        task(string): 要完成的任务的清晰描述（越具体越好，如「打开微信，进入扫码界面」）
+        device(string): 设备别名或 IP:端口，留空使用默认设备
+    """
+        if err := self._guard_tool(event):
+            yield err
+            return
+        if not bool(self._cfg("subagent_enabled", True)):
+            yield "子 agent 模式已在插件配置中关闭，请直接使用 ruying_get_ui / ruying_tap 等单步工具。"
+            return
+        task = str(task or "").strip()
+        if not task:
+            yield "未提供任务描述。"
+            return
+        serial, e = await self._tool_serial(device)
+        if e:
+            yield e
+            return
+        pid, err = self._resolve_subagent_provider(getattr(event, "unified_msg_origin", "") or "")
+        if err:
+            yield f"子 agent 启动失败：{err}。可用 /如影 providers 查看可用模型商。"
+            return
+
+        # 组装子 agent 工具集：仅如影自身工具，排除本工具避免递归
+        toolset = None
+        try:
+            tmgr = self.context.get_llm_tool_manager()
+            toolset = tmgr.get_full_tool_set()
+            for t in list(toolset):
+                keep = (
+                    getattr(t, "name", "").startswith("ruying_")
+                    and getattr(t, "name", "") != "ruying_auto"
+                    and getattr(t, "active", True)
+                )
+                if not keep:
+                    toolset.remove_tool(t.name)
+        except Exception as ex:  # noqa: BLE001
+            yield f"子 agent 工具集组装失败：{ex}"
+            return
+
+        prompt = (
+            f"任务：{task}\n"
+            f"目标设备 serial：{serial}（调用工具时 device 参数一律留空即可，默认设备已就绪）。"
+        )
+        try:
+            llm_resp = await self.context.tool_loop_agent(
+                event=event,
+                chat_provider_id=pid,
+                prompt=prompt,
+                system_prompt=self.SUBAGENT_INSTRUCTION,
+                tools=toolset,
+                contexts=[],
+                max_steps=int(self._cfg("subagent_max_steps", 15) or 15),
+            )
+        except Exception as ex:  # noqa: BLE001
+            yield f"子 agent 执行失败：{ex}"
+            return
+        text = getattr(llm_resp, "completion_text", "") or ""
+        usage = getattr(llm_resp, "usage", None)
+        suffix = ""
+        total = getattr(usage, "total_tokens", None) if usage is not None else None
+        if total:
+            suffix = f"（本次子 agent 用量 {total} tokens）"
+        yield f"【如影子 agent 已完成】{text}{suffix}".strip()
 
     @filter.llm_tool(name="ruying_scan_devices")
     async def tool_scan_devices(self, event: AstrMessageEvent):

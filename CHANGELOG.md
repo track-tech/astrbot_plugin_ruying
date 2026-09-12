@@ -3,6 +3,17 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.9] - 2026-09-12
+
+### 新增（子 agent）
+- `ruying_auto(task)` 工具：把多步手机操控任务交给「如影」子 agent 自主完成。
+  子 agent 拥有独立上下文（工具结果不污染主对话历史、15 个工具 schema 不再常驻主对话），
+  带专属安卓操控守则（先看屏再点、tap_and_wait 确认、digest 优先等），只回最终结果与用量
+- **子 agent 模型可自定义**：从已配置的模型商中任选（建议带视觉能力的模型）；
+  默认跟随会话当前模型。`/如影 providers` 查看列表，`/如影 agent_provider <ID|清空>` 切换
+- 新增配置：`subagent_enabled` / `subagent_provider_id` / `subagent_max_steps`（默认 15）
+- 单步操作仍建议直接用对应单步工具（handoff 有冷启动开销），工具描述已引导模型自行判断
+
 ## [0.3.8] - 2026-09-12
 
 ### 新增

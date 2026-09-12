@@ -50,7 +50,9 @@
   "whitelist": {
     "description": "设备操作白名单（管理员之外额外授权）",
     "type": "list",
-    "items": {"type": "string"},
+    "items": {
+      "type": "string"
+    },
     "hint": "每项为 会话标识（unified_msg_origin，如 aiocqhttp:GroupMessage:12345）或纯会话 ID（如 12345）。仅影响日常操作类指令与 LLM 工具；设备配对/连接/移除等管理指令永远仅限管理员。",
     "default": []
   },
@@ -77,5 +79,23 @@
     "type": "int",
     "hint": "pull 拉取的文件保存在 data/plugin_data/astrbot_plugin_ruying/downloads/，超出数量自动清理最旧的。",
     "default": 20
+  },
+  "subagent_enabled": {
+    "description": "启用子 agent 工具 ruying_auto",
+    "type": "bool",
+    "hint": "开启后 LLM 可通过 ruying_auto 把多步手机操控任务交给如影子 agent 自主完成（独立上下文，不污染主对话历史）。",
+    "default": true
+  },
+  "subagent_provider_id": {
+    "description": "子 agent 使用的模型商 ID",
+    "type": "string",
+    "hint": "留空=跟随会话当前模型。可发 /如影 providers 查看可用模型商，或 /如影 agent_provider <ID> 快捷设置。建议选带视觉能力的模型。",
+    "default": ""
+  },
+  "subagent_max_steps": {
+    "description": "子 agent 单次任务最大步数",
+    "type": "int",
+    "hint": "超过后强制停止并返回当前进展。",
+    "default": 15
   }
 }

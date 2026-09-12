@@ -86,6 +86,7 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 - `ruying_pull_file` —— 从设备拉取文件发送到会话。
 - `ruying_device_status` —— 电量/充电、系统版本、分辨率、前台应用。
 - `ruying_scan_devices` —— 扫描局域网并自动连接设备（仅管理员，自然语言说「帮我扫一下局域网连接手机」即可触发）。
+- `ruying_auto` —— **子 agent**：把多步任务（如「打开B站搜索如影并进入第一个视频」）交给如影自主完成，模型可从已配置的模型商中任选，独立上下文不污染主对话；单步操作请用上面的单步工具。
 - `ruying_shell` —— 任意命令（默认关闭，仅管理员）。
 
 ## 配置项（WebUI 插件配置）
@@ -101,10 +102,22 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 | `shot_quality` | 70 | 回传给 LLM 的截图 JPEG 质量 |
 | `shot_dedup` | true | 无操作间隔的重复截图只回「屏幕未变化」文字，不回图 |
 | `keep_downloads` | 20 | pull 拉取文件本地保留数量，超出自动清理最旧的 |
+| `subagent_enabled` | true | 启用子 agent 工具 `ruying_auto` |
+| `subagent_provider_id` | （空） | 子 agent 使用的模型商 ID，留空跟随会话模型 |
+| `subagent_max_steps` | 15 | 子 agent 单次任务最大步数 |
 | `whitelist` | [] | 额外授权的会话：完整 `unified_msg_origin`（如 `aiocqhttp:GroupMessage:12345`）或纯会话 ID |
 | `enable_shell_tool` | false | 允许 LLM/指令执行任意 shell（高风险） |
 | `enable_vision` | true | 截图以图片返回给多模态模型（模型不支持时自动降级） |
 | `keep_screenshots` | 10 | 本地保留截图数量 |
+
+## 子 agent（多步任务自主模式）
+
+在聊天里说「帮我在手机上打开B站搜一下如影」这类多步任务时，主对话模型可调用 `ruying_auto` 把整个任务交给**如影子 agent**：
+
+- 独立上下文：中途的 UI 读取、截图摘要全部留在子 agent 内部，只回最终结果——主对话历史不被污染，这是省 token 的结构性方案
+- 模型可自定义：`/如影 providers` 查看已配置的模型商，`/如影 agent_provider <ID>` 为子 agent 单独选一个模型（建议选**带视觉能力**的，看屏更准；主对话模型可以继续用便宜的纯文本模型）
+- 权限延续：子 agent 里的工具仍受管理员/白名单约束
+- 单步操作（截个图、点一下）直接说就行，不必进子 agent
 
 ## 安全建议
 
