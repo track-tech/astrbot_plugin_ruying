@@ -100,11 +100,51 @@ def split_ip_port(text: str) -> Optional[tuple[str, int]]:
 
 
 class Adb:
-    """以子进程方式调用 adb CLI 的最小封装。"""
+    """以子进程方式调用 adb CLI 的最小封装。
 
-    def __init__(self, adb_path: str = "adb", timeout: float = 20.0):
-        self.adb_path = (adb_path or "adb").strip() or "adb"
-        self.default_timeout = max(5.0, float(timeout))
+    adb_path / timeout 支持传入 provider（可调用对象）实现惰性读取：
+    每次执行时取当前值，配置在 WebUI 中修改后无需重载插件即可生效。
+    """
+
+    def __init__(
+        self,
+        adb_path: str = "adb",
+        timeout: float = 20.0,
+        path_provider=None,
+        timeout_provider=None,
+    ):
+        self._adb_path = (adb_path or "adb").strip() or "adb"
+        self._timeout = max(5.0, float(timeout))
+        self._path_provider = path_provider
+        self._timeout_provider = timeout_provider
+
+    @property
+    def adb_path(self) -> str:
+        if self._path_provider is not None:
+            try:
+                v = self._path_provider()
+                if v and str(v).strip():
+                    return str(v).strip()
+            except Exception:  # noqa: BLE001 - provider 异常时回退静态值
+                pass
+        return self._adb_path
+
+    @adb_path.setter
+    def adb_path(self, value: str) -> None:
+        self._adb_path = (value or "adb").strip() or "adb"
+
+    @property
+    def default_timeout(self) -> float:
+        if self._timeout_provider is not None:
+            try:
+                return max(5.0, float(self._timeout_provider()))
+            except (TypeError, ValueError):
+                pass
+        return self._timeout
+
+    @default_timeout.setter
+    def default_timeout(self, value: float) -> None:
+        self._timeout = max(5.0, float(value))
 
     # ------------------------------------------------------------------
     # 底层执行
@@ -121,7 +161,8 @@ class Adb:
         except FileNotFoundError:
             raise AdbError(
                 f"找不到 adb：{self.adb_path}。请安装 Android platform-tools，"
-                "并在插件配置 adb_path 中填写完整路径，或将其加入 PATH。"
+                "并在插件配置 adb_path 中填写完整路径（也可是有执行权限的包装脚本），或将其加入 PATH。"
+                "若刚修改过配置：WebUI 保存后立即生效；手改配置文件则需重载插件或新开一轮对话。"
             )
         except OSError as e:
             raise AdbError(f"adb 无法启动：{e}")

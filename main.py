@@ -41,7 +41,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.3"
+PLUGIN_VERSION = "0.3.4"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -101,9 +101,11 @@ class RuyingPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        # adb 路径/超时惰性读取：每次执行时取当前配置值，
+        # WebUI 修改 adb_path 后无需重载插件即可生效。
         self.adb = Adb(
-            adb_path=str(self._cfg("adb_path", "adb") or "adb"),
-            timeout=float(self._cfg("command_timeout", 20) or 20),
+            path_provider=lambda: self._cfg("adb_path", "adb"),
+            timeout_provider=lambda: self._cfg("command_timeout", 20),
         )
         self.data_dir = _data_dir()
         os.makedirs(self.data_dir, exist_ok=True)
