@@ -3,6 +3,16 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.1] - 2026-09-13
+
+### 新增（剪贴板输入，多数场景无需 ADBKeyboard）
+- 中文/非 ASCII 输入新增**剪贴板粘贴**路线：`screen_tool.jar` 以 shell 身份调用
+  ClipboardManager 写剪贴板（仿 scrcpy FakeContext 包名伪装，通过 Android 10+
+  归属校验）+ 注入 KEYCODE_PASTE 粘贴到焦点输入框，无需安装任何东西
+- 三段回退：ASCII 直输 → 剪贴板粘贴 → ADBKeyboard → 明确报错；任一环节失败自动降级
+- 已知限制：ColorOS/部分国产 ROM 会终止访问剪贴板框架的 shell 进程（实测 PDEM10
+  直接击杀），此类设备仍需 ADBKeyboard；原生/Pixel/多数海外 ROM 剪贴板路线可用
+
 ## [0.4.0] - 2026-09-13
 
 ### 修复（真机长任务实测反馈）

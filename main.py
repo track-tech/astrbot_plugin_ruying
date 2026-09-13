@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.4.1"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -194,15 +194,15 @@ class RuyingPlugin(Star):
     # ------------------------------------------------------------------
     # 隐身模式：亮度置 0 的"息屏操作"
     # ------------------------------------------------------------------
-    async def _jar_power(self, serial: str, action: str) -> tuple[bool, str]:
-        """推送并执行 screen_tool.jar：SurfaceFlinger 层开关背光（scrcpy -S 同原理）。"""
+    async def _jar_power(self, serial: str, action: str, *extra: str) -> tuple[bool, str]:
+        """推送并执行 screen_tool.jar：开关背光 / 写剪贴板（scrcpy 同款机制）。"""
         jar_local = os.path.join(_PLUGIN_DIR, "assets", "screen_tool.jar")
         if not os.path.exists(jar_local):
             return False, "screen_tool.jar 缺失"
         await self.adb.push(serial, jar_local, "/data/local/tmp/ruying_screen.jar", timeout=30)
         out = await self.adb.shell(
             serial, "CLASSPATH=/data/local/tmp/ruying_screen.jar", "app_process",
-            "/", "com.ruying.ScreenTool", action, timeout=15,
+            "/", "com.ruying.ScreenTool", action, *extra, timeout=15,
         )
         if not out.startswith("OK"):
             return False, out[:150]
@@ -1325,10 +1325,20 @@ class RuyingPlugin(Star):
     # 内部共用
     # ------------------------------------------------------------------
     async def _input_text(self, serial: str, text: str) -> str:
-        """输入文字：ASCII 直接 input text；非 ASCII 需要 ADBKeyboard。"""
+        """输入文字。ASCII 直接 input text；非 ASCII 依次尝试：
+        ① 剪贴板粘贴（screen_tool.jar 写剪贴板 + KEYCODE_PASTE，无需安装任何东西；
+           原生系统/部分海外 ROM 可用，ColorOS 等会终止访问剪贴板框架的 shell 进程）；
+        ② ADBKeyboard（需设备已装并启用）；
+        ③ 都不可用时给出明确的解决指引。
+        """
         if Adb.is_ascii_text(text):
             await self.adb.shell(serial, "input", "text", Adb.escape_input_text(text))
             return f"✅ 已输入：{text}"
+        try:
+            if await self._clipboard_paste(serial, text):
+                return f"✅ 已通过剪贴板粘贴输入：{text}"
+        except Exception:  # noqa: BLE001 - 剪贴板失败自动落回 ADBKeyboard
+            logger.info("[如影] 剪贴板输入不可用，转用 ADBKeyboard 兜底")
         if await self.adb.has_adb_keyboard(serial):
             quoted = Adb.escape_input_text(text)
             await self.adb.shell(
@@ -1336,10 +1346,21 @@ class RuyingPlugin(Star):
             )
             return f"✅ 已通过 ADBKeyboard 输入：{text}"
         raise AdbError(
-            "adb 的 input text 不支持中文等非 ASCII 字符。"
-            "请在手机上安装 ADBKeyboard 输入法（github.com/senzhk/ADBKeyBoard）并设为当前输入法后重试；"
-            "或改用剪贴板粘贴方案。"
+            "中文/非 ASCII 输入失败：剪贴板粘贴被系统限制（ColorOS/部分国产 ROM 会终止"
+            "访问剪贴板框架的 shell 进程），且未安装 ADBKeyboard。方案二选一："
+            "① 手机安装 ADBKeyboard 输入法（github.com/senzhk/ADBKeyBoard）并设为当前"
+            "输入法；② 改输英文/数字/URL（ASCII 可直接输入）。"
         )
+
+    async def _clipboard_paste(self, serial: str, text: str) -> bool:
+        """jar 写剪贴板 + KEYCODE_PASTE 粘贴到当前焦点输入框（需先点击聚焦）。"""
+        b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        ok, out = await self._jar_power(serial, "clip", b64)
+        if not ok or not out.startswith("OK"):
+            logger.info(f"[如影] 剪贴板写入不可用：{out[:80]}")
+            return False
+        await self.adb.shell(serial, "input", "keyevent", "279", timeout=10)  # KEYCODE_PASTE
+        return True
 
     async def _resolve_package(self, serial: str, name: str) -> str:
         name = (name or "").strip()

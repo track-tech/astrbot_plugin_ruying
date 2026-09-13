@@ -132,7 +132,7 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 - **`ruying_get_ui` 返回空元素？** 目标应用禁止辅助功能读取（游戏、部分视频页）。改用 `ruying_screenshot` 让模型按截图估算坐标。
 - **截图一片黑？** 熄屏导致的黑屏已由 `auto_wake` 自动处理（v0.3.6 起）；剩余场景是部分应用（银行/视频 DRM）主动禁止截屏，属系统层面限制。
 - **子 agent 长任务做到一半被截断？** 平台对单次工具调用有超时上限（默认约 300 秒）。在 AstrBot 配置中调大 `tool_call_timeout`，或把大任务拆成多个小任务分派。
-- **中文输入不动？** 安装 [ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard) 并设为当前输入法后自动生效；临时方案是让模型改输英文或 URL。
+- **中文输入不动？** v0.4.1 起优先走**剪贴板粘贴**（无需安装任何东西；原生/Pixel/多数海外 ROM 可用）。ColorOS/部分国产 ROM 会终止 shell 的剪贴板访问，此时仍需安装 [ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard) 并设为当前输入法；临时方案是让模型改输英文或 URL。
 - **改了 adb_path 还是报「找不到 adb：adb」？** 生效时机分三种：① WebUI 插件配置里修改并保存 → **立即生效**（v0.3.4 起惰性读取，无需重载）；② 手改配置文件（data/config/xxx_config.json）→ 需重载插件；③ 若重载发生在**同一轮对话进行中**，该轮使用的工具集在开始时已快照、仍指向旧插件实例（AstrBot 核心层行为），新开一轮对话即恢复。
 - **模型看不到截图？** 需要同时满足：`enable_vision` 开启 + 使用多模态模型 + AstrBot 版本支持工具图片注入。不满足时自动降级为“图片发给用户 + 文字给模型”。
 
