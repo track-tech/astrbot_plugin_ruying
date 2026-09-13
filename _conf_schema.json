@@ -97,5 +97,11 @@
     "type": "int",
     "hint": "超过后强制停止并返回当前进展。",
     "default": 15
+  },
+  "stealth": {
+    "description": "隐身模式：操作设备时屏幕全黑",
+    "type": "bool",
+    "hint": "开启后，截屏/看控件/触控/子 agent 等设备操作会在 SurfaceFlinger 层关闭背光（真·黑屏，近看像关机），系统与触控不受影响，截屏看屏照常。也可用 /如影 stealth on|off 切换（同一开关）。设备不支持时自动回退亮度方案并如实报告。",
+    "default": false
   }
 }

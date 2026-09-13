@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.12"
+PLUGIN_VERSION = "0.3.13"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -376,16 +376,23 @@ class RuyingPlugin(Star):
             return
         arg = rest.strip().lower()
         st = self._stealth_load()
-        if arg in ("on", "开", "开启"):
-            ok, msg = await self._stealth_set(serial, True)
-        elif arg in ("off", "关", "关闭"):
-            ok, msg = await self._stealth_set(serial, False)
+        if arg in ("on", "开", "开启", "off", "关", "关闭"):
+            want = arg in ("on", "开", "开启")
+            # 与 WebUI 配置同源：写入配置并立即生效
+            self.config["stealth"] = want
+            try:
+                self.config.save_config()
+            except Exception:  # noqa: BLE001
+                pass
+            ok, msg = await self._stealth_set(serial, want)
         else:
             ok = True
+            cfg_txt = "开启" if bool(self._cfg("stealth", False)) else "关闭"
+            dev_txt = "黑屏中" if st.get(serial, {}).get("active") else "未激活"
             msg = (
-                f"隐身模式当前：{'开启' if st.get(serial, {}).get('active') else '关闭'}。\n"
-                "开启后亮度置 0（屏幕全黑但系统正常运行，截屏看屏不受影响），"
-                "部分系统会保留极微弱的最低亮度。用法：/如影 stealth on|off"
+                f"隐身模式：配置 {cfg_txt}，设备 {dev_txt}。\n"
+                "开启后背光关闭（屏幕全黑但系统正常运行，截屏看屏不受影响）。"
+                "用法：/如影 stealth on|off"
             )
         yield event.plain_result(("✅ " if ok else "❌ ") + msg)
 
@@ -590,6 +597,18 @@ class RuyingPlugin(Star):
         熄屏状态下截屏是纯黑图、控件 dump 也只是锁屏内容，因此屏幕相关操作前调用。
         若设备设置了锁屏密码，唤醒后只能到锁屏页——由 LLM 看图后告知用户，无法也不应远程绕过。
         """
+        # 隐身开关（WebUI/指令共用同一配置）：与设备实际状态惰性对齐
+        try:
+            st = self._stealth_load()
+            cfg_stealth = bool(self._cfg("stealth", False))
+            if cfg_stealth and not st.get(serial, {}).get("active"):
+                await self._stealth_set(serial, True)
+                st = self._stealth_load()
+            elif not cfg_stealth and st.get(serial, {}).get("active"):
+                await self._stealth_set(serial, False)
+                st = self._stealth_load()
+        except AdbError:
+            pass
         if self._stealth_load().get(serial, {}).get("active"):
             # 隐身模式：保持黑屏（背光关闭）才是正确状态。
             # 设备若被系统真正睡眠（touch 失效）则唤醒并重新压黑；否则什么都不做。
