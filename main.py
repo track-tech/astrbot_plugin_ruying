@@ -17,6 +17,7 @@ import asyncio
 import base64
 import hashlib
 import io
+import json
 import os
 import re
 import sys
@@ -54,7 +55,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.10"
+PLUGIN_VERSION = "0.3.11"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -180,10 +181,177 @@ class RuyingPlugin(Star):
         self._shot_state: dict[str, dict] = {}
         self._ops_since_shot: dict[str, int] = {}
         logger.info(f"[如影] 插件已加载，数据目录：{self.data_dir}")
-
     async def terminate(self):
-        """插件卸载：无后台任务需要清理。"""
-        pass
+        """插件卸载：尽力恢复隐身模式改动的亮度，避免用户手机一直黑屏。"""
+        try:
+            st = self._stealth_load()
+            for serial in list(st.keys()):
+                await self._stealth_set(serial, False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------------------
+    # 隐身模式：亮度置 0 的"息屏操作"
+    # ------------------------------------------------------------------
+    def _stealth_path(self) -> str:
+        return os.path.join(self.data_dir, "stealth.json")
+
+    def _stealth_load(self) -> dict:
+        try:
+            with open(self._stealth_path(), encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _stealth_save(self, data: dict) -> None:
+        try:
+            with open(self._stealth_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except OSError:
+            pass
+
+    async def _read_brightness_state(self, serial: str) -> str:
+        """读取当前实际背光亮度（dumpsys mBrightnessState，随写入与自动亮度变化）。"""
+        try:
+            out = await self.adb.shell(serial, "dumpsys display", timeout=12)
+            for line in out.splitlines():
+                if "mBrightnessState=" in line:
+                    return line.strip().split("mBrightnessState=")[1].split()[0]
+        except AdbError:
+            pass
+        return ""
+
+    @staticmethod
+    def _dimmed(orig: str, now: str) -> bool:
+        """背光是否已显著降低（阈值 50%，容忍自动亮度漂移）。"""
+        try:
+            return float(now) < float(orig) * 0.5
+        except (TypeError, ValueError):
+            return False
+
+    async def _stealth_set(self, serial: str, on: bool) -> tuple[bool, str]:
+        """开启/关闭隐身模式（亮度置 0）。多路尝试 + 写后验证，如实报告失败。
+
+        尝试顺序：settings put（多数原生系统可用）→ cmd display set-brightness。
+        ColorOS/部分国产 ROM 会同时拒绝两者（shell 无 WRITE_SETTINGS /
+        MANAGE_APP_OPS_MODES 权限），此时返回手动授权指引。
+        """
+        st = self._stealth_load()
+        if on:
+            if st.get(serial, {}).get("active"):
+                return True, "隐身模式已处于开启状态。"
+            orig_state = await self._read_brightness_state(serial)
+            orig = {"active": True, "state": orig_state}
+            for key in ("screen_brightness", "screen_brightness_mode", "screen_brightness_float"):
+                try:
+                    orig[key] = await self.adb.shell(
+                        serial, "settings", "get", "system", key, timeout=10
+                    )
+                except AdbError:
+                    orig[key] = ""
+
+            applied = ""
+            # 路线 1：settings put（原生/Pixel/多数海外 ROM 可用）
+            try:
+                await self.adb.shell(
+                    serial, "cmd", "settings", "put", "system",
+                    "screen_brightness_mode", "0", timeout=10,
+                )
+                await self.adb.shell(
+                    serial, "settings", "put", "system",
+                    "screen_brightness", "0", timeout=10,
+                )
+                await self.adb.shell(
+                    serial, "settings", "put", "system",
+                    "screen_brightness_float", "0.0", timeout=10,
+                )
+                applied = "settings"
+            except AdbError:
+                pass
+            now = await self._read_brightness_state(serial)
+            if not (orig_state and self._dimmed(orig_state, now)):
+                # 路线 2：cmd display set-brightness
+                try:
+                    await self.adb.shell(
+                        serial, "cmd", "display", "set-brightness", "0.0", timeout=10,
+                    )
+                    applied = applied or "display"
+                    applied = "display"
+                except AdbError:
+                    pass
+                now = await self._read_brightness_state(serial)
+                if not (orig_state and self._dimmed(orig_state, now)):
+                    # 两条路都不通：尽力还原 settings，如实报告
+                    try:
+                        if orig.get("screen_brightness_mode"):
+                            await self.adb.shell(
+                                serial, "cmd", "settings", "put", "system",
+                                "screen_brightness_mode", orig["screen_brightness_mode"],
+                                timeout=10,
+                            )
+                    except AdbError:
+                        pass
+                    return False, (
+                        "该系统限制了 adb 修改屏幕亮度（ColorOS / 部分国产 ROM 常见："
+                        "shell 无 WRITE_SETTINGS 权限，appops 自授权也被拒）。"
+                        "如需隐身操作，可在手机上手动授权：设置 → 应用管理 → 显示系统应用 → "
+                        "「Shell」→ 修改系统设置 → 允许，然后重新执行 /如影 stealth on；"
+                        "或使用 root。"
+                    )
+            st[serial] = orig
+            self._stealth_save(st)
+            return True, (
+                "隐身模式已开启（"
+                + ("settings 写入" if applied == "settings" else "display 接口")
+                + "）：屏幕近看全黑但系统与触控正常，截屏/看屏不受影响。"
+                "发送 /如影 stealth off 恢复亮度。"
+            )
+
+        saved = st.pop(serial, None)
+        self._stealth_save(st)
+        if not saved or not saved.get("active"):
+            return True, "隐身模式本来就没有开启。"
+        try:
+            for key in ("screen_brightness_mode", "screen_brightness", "screen_brightness_float"):
+                val = saved.get(key, "")
+                if val:
+                    cmd = ("cmd", "settings", "put", "system", key, val) if key == "screen_brightness_mode"                         else ("settings", "put", "system", key, val)
+                    await self.adb.shell(serial, *cmd, timeout=10)
+            state = saved.get("state", "")
+            if state:
+                try:
+                    await self.adb.shell(
+                        serial, "cmd", "display", "set-brightness",
+                        str(float(state) / 255.0), timeout=10,
+                    )
+                except AdbError:
+                    pass
+        except AdbError as ex:
+            return False, f"恢复亮度失败：{ex}（可重试 /如影 stealth off，或手动调节亮度）"
+        return True, "已关闭隐身模式：亮度已恢复原值。"
+
+    async def _cmd_stealth(self, event: AstrMessageEvent, rest: str):
+        if err := self._admin_denied(event):
+            yield event.plain_result(err)
+            return
+        serial, e = await self._resolve_serial("")
+        if e:
+            yield event.plain_result(f"❌ {e}")
+            return
+        arg = rest.strip().lower()
+        st = self._stealth_load()
+        if arg in ("on", "开", "开启"):
+            ok, msg = await self._stealth_set(serial, True)
+        elif arg in ("off", "关", "关闭"):
+            ok, msg = await self._stealth_set(serial, False)
+        else:
+            ok = True
+            msg = (
+                f"隐身模式当前：{'开启' if st.get(serial, {}).get('active') else '关闭'}。\n"
+                "开启后亮度置 0（屏幕全黑但系统正常运行，截屏看屏不受影响），"
+                "部分系统会保留极微弱的最低亮度。用法：/如影 stealth on|off"
+            )
+        yield event.plain_result(("✅ " if ok else "❌ ") + msg)
 
     # ------------------------------------------------------------------
     # 配置与权限
@@ -419,6 +587,7 @@ class RuyingPlugin(Star):
 /如影 disconnect [ip:端口] —— 断开 adb 连接
 /如影 status —— adb 版本与设备状态
 /如影 scan —— 扫描局域网并自动连接发现的设备
+/如影 stealth [on|off] —— 隐身模式：亮度置 0 全黑操作，截图看屏不受影响（仅管理员）
 
 【操作 · 管理员/白名单】
 /如影 shot [设备] —— 截屏并发送到会话
@@ -483,6 +652,9 @@ class RuyingPlugin(Star):
                 yield r
         elif sub in ("scan", "扫描"):
             async for r in self._cmd_scan(event):
+                yield r
+        elif sub in ("stealth", "隐身"):
+            async for r in self._cmd_stealth(event, rest):
                 yield r
         elif sub == "shot":
             async for r in self._cmd_shot(event, rest):
