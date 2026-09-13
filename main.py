@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.13"
+PLUGIN_VERSION = "0.3.14"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -260,7 +260,8 @@ class RuyingPlugin(Star):
                 await self.adb.shell(serial, "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
                 await asyncio.sleep(0.8)
                 jar_ok, jar_msg = await self._jar_power(serial, "off")
-            except AdbError as ex:
+            except Exception as ex:
+                jar_ok = False
                 jar_msg = str(ex)
             if jar_ok:
                 st[serial] = {"active": True, "method": "sf"}
@@ -345,7 +346,7 @@ class RuyingPlugin(Star):
             try:
                 await self._jar_power(serial, "on")
                 return True, "已关闭隐身模式：屏幕已点亮。"
-            except AdbError as ex:
+            except Exception as ex:
                 return False, f"点亮屏幕失败：{ex}（可重试 /如影 stealth off，或手动按电源键）"
         try:
             for key in ("screen_brightness_mode", "screen_brightness", "screen_brightness_float"):
@@ -618,7 +619,7 @@ class RuyingPlugin(Star):
                     await self.adb.shell(serial, "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
                     await asyncio.sleep(0.8)
                 await self._jar_power(serial, "off")
-            except AdbError:
+            except Exception:  # noqa: BLE001 - 隐身辅助失败不阻断主操作
                 pass
             return
         if not bool(self._cfg("auto_wake", True)):

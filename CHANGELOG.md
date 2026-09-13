@@ -3,6 +3,16 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.14] - 2026-09-13
+
+### 修复（发布完整性）
+- 修复 GitHub 仓库文件严重滞后：此前多次发布采用逐文件拷贝同步，导致
+  `ruying_core/adb.py`（缺 `Adb.push` 与 v0.3.4 的 adb_path 惰性读取）、
+  `discover.py`、`devices.py`、`screen.py`、`safety.py` 等 11 个文件在仓库中为旧版，
+  从仓库更新的用户会遇到「Adb object has no attribute 'push'」及模型商识别等问题。
+  现已改为**全量树同步**，仓库与本地完全一致
+- 加固：隐身模式链路的异常捕获从 AdbError 放宽为 Exception，辅助失败不再穿透
+
 ## [0.3.13] - 2026-09-13
 
 ### 新增

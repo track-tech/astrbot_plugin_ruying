@@ -369,6 +369,13 @@ class Adb:
             return local
         raise AdbError(f"拉取文件失败：{text[:200] or f'adb 退出码 {rc}'}")
 
+    async def push(self, serial: str, local: str, remote: str, timeout: float = 60.0) -> str:
+        rc, out = await self.run("-s", serial, "push", local, remote, timeout=timeout)
+        text = self._text(out)
+        if rc == 0 and "bytes" in text:
+            return remote
+        raise AdbError(f"推送文件失败：{text[:200]}")
+
     async def mdns_services(self) -> list[dict]:
         try:
             _, out = await self.run("mdns", "services", timeout=12)
