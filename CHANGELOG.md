@@ -3,6 +3,17 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.2] - 2026-09-13
+
+### 修复
+- 修复 v0.4.1 的 `screen_tool.jar` 构建缺陷：dex 中缺少 FakeContext/Workarounds 两个类，
+  剪贴板调用时抛 NoClassDefFoundError 且进程被终止（表现为 "Killed"）。
+  现 dex 包含全部类，剪贴板路线在支持的系统上可用
+- PDEM10（ColorOS 13）实测：ColorOS 在 ServiceManager/attribution 层拦截了
+  shell 进程对剪贴板服务的访问（`Package android does not belong to 2000`），
+  剪贴板路线在该系统上不可用（系统级拦截，无法绕过），插件自动回退 ADBKeyboard
+- `screen_tool.jar` 清理调试代码
+
 ## [0.4.1] - 2026-09-13
 
 ### 新增（剪贴板输入，多数场景无需 ADBKeyboard）
