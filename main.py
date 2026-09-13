@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.14"
+PLUGIN_VERSION = "0.4.0"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -70,6 +70,7 @@ from ruying_core import (  # noqa: E402
     Adb,
     AdbError,
     COMMON_APPS,
+    GENERIC_APP_ALIASES,
     DeviceRegistry,
     KEYCODES,
     describe_state,
@@ -1085,6 +1086,46 @@ class RuyingPlugin(Star):
         tail = f"\n…… 共 {len(pkgs)} 个" if len(pkgs) > 50 else ""
         yield event.plain_result("已安装应用：\n" + "\n".join(shown) + tail)
 
+    async def _launch_activity(self, serial: str, package: str) -> tuple[bool, str]:
+        """启动应用：优先 `cmd package resolve-activity` + `am start`。
+
+        ColorOS 等系统的 /system/bin/monkey 被精简魔改（逐参数回显、输出非标准），
+        输出解析不可靠，因此 monkey 只作回退。返回 (是否成功发出启动命令, 详情)。
+        """
+        try:
+            out = await self.adb.shell(
+                serial, "cmd", "package", "resolve-activity", "--brief", package, timeout=15
+            )
+            lines = [
+                l.strip() for l in out.splitlines()
+                if l.strip() and not l.strip().startswith(("priority=", "No activity"))
+            ]
+            if lines and "/" in lines[-1]:
+                out2 = await self.adb.shell(serial, "am", "start", "-n", lines[-1], timeout=15)
+                low = out2.lower()
+                if low.startswith("error") or "exception" in low:
+                    return False, out2[:200]
+                return True, out2
+        except AdbError:
+            pass
+        out = await self.adb.launch_app(serial, package)
+        low = out.lower()
+        if "error" in low or "no activities" in low or "abort" in low:
+            return False, out[:200]
+        return True, out
+
+    async def _verify_launch(self, serial: str, package: str, attempts: int = 3) -> bool:
+        """轮询前台应用确认目标包已到前台（尽力而为）。"""
+        for _ in range(attempts):
+            try:
+                line = await self.adb.current_activity(serial)
+                if package.lower() in line.lower():
+                    return True
+            except AdbError:
+                pass
+            await asyncio.sleep(1.0)
+        return False
+
     async def _cmd_launch(self, event: AstrMessageEvent, rest: str):
         if err := self._op_denied(event):
             yield event.plain_result(err)
@@ -1103,14 +1144,14 @@ class RuyingPlugin(Star):
             if not pkg:
                 yield event.plain_result(
                     f"❌ 无法识别应用「{toks[0]}」。可用 /如影 apps 查看包名，"
-                    "或先用常见应用名（微信/QQ/抖音/B站/淘宝/支付宝…）。"
+                    "或先用常见应用名（微信/QQ/抖音/B站/淘宝/支付宝/浏览器…）。"
                 )
                 return
-            out = await self.adb.launch_app(serial, pkg)
-            if "error" in out.lower() or "no activities" in out.lower():
-                yield event.plain_result(f"❌ 启动 {pkg} 失败：{out[:200]}")
-            else:
+            sent, detail = await self._launch_activity(serial, pkg)
+            if sent:
                 yield event.plain_result(f"✅ 已启动 {pkg}")
+            else:
+                yield event.plain_result(f"❌ 启动 {pkg} 失败：{detail}")
         except AdbError as ex:
             yield event.plain_result(f"❌ {ex}")
 
@@ -1310,9 +1351,16 @@ class RuyingPlugin(Star):
         if re.match(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$", low):
             return low
         try:
-            pkgs = await self.adb.list_packages(serial)
+            # 泛称（浏览器/相机等）多来自系统预装，探测时需包含系统应用
+            pkgs = await self.adb.list_packages(serial, third_party_only=False)
         except AdbError:
-            return ""
+            pkgs = []
+        installed = set(pkgs)
+        # 泛称（如「浏览器」）→ 在常见候选包里探测实际安装的那个
+        if low in GENERIC_APP_ALIASES:
+            for cand in GENERIC_APP_ALIASES[low]:
+                if cand in installed:
+                    return cand
         for k, v in COMMON_APPS.items():
             if k in low or low in k:
                 return v
@@ -1914,11 +1962,12 @@ Args:
             yield f"查询失败：{ex}"
 
     @filter.llm_tool(name="ruying_list_apps")
-    async def tool_list_apps(self, event: AstrMessageEvent, keyword: str = "", device: str = ""):
-        """列出安卓设备上已安装的第三方应用包名，可按关键词过滤。用于找到要启动的应用的包名。
+    async def tool_list_apps(self, event: AstrMessageEvent, keyword: str = "", include_system: bool = False, device: str = ""):
+        """列出安卓设备上已安装应用的包名，可按关键词过滤。用于找到要启动的应用的包名。注意：浏览器、相机等系统/预装应用默认不列出，查找它们时必须传 include_system=true。
 
 Args:
         keyword(string): 过滤关键词（包含匹配，可为空）
+        include_system(boolean): true 时同时列出系统/预装应用（默认 false 只列第三方）
         device(string): 设备别名或 IP:端口，留空使用默认设备
     """
         if err := self._guard_tool(event):
@@ -1929,7 +1978,7 @@ Args:
             yield e
             return
         try:
-            pkgs = await self.adb.list_packages(serial)
+            pkgs = await self.adb.list_packages(serial, third_party_only=not include_system)
         except AdbError as ex:
             yield f"查询失败：{ex}"
             return
@@ -1937,7 +1986,8 @@ Args:
         if kw:
             pkgs = [p for p in pkgs if kw in p.lower()]
         if not pkgs:
-            yield f"没有匹配「{kw}」的应用。" if kw else "设备上没有第三方应用。"
+            hint = "（系统应用需传 include_system=true）" if not include_system else ""
+            yield f"没有匹配「{kw}」的应用。{hint}" if kw else f"设备上没有匹配的应用。{hint}"
             return
         shown = pkgs[:60]
         tail = f"\n…… 共 {len(pkgs)} 个" if len(pkgs) > 60 else ""
@@ -1945,10 +1995,10 @@ Args:
 
     @filter.llm_tool(name="ruying_launch_app")
     async def tool_launch_app(self, event: AstrMessageEvent, app: str = "", device: str = ""):
-        """在安卓设备上启动一个应用。app 可为包名或常见应用名（如 微信/QQ/抖音/B站/淘宝/支付宝/设置 等），无法识别时会返回建议。
+        """在安卓设备上启动一个应用并确认其到达前台。app 可为包名或应用名（如 微信/QQ/抖音/B站/浏览器/Edge/Chrome/设置 等，浏览器等泛称会自动探测实际安装的应用），无法识别时会返回建议。
 
 Args:
-        app(string): 包名（如 com.tencent.mm）或应用名称（如 微信）
+        app(string): 包名（如 com.tencent.mm）或应用名称（如 微信、浏览器）
         device(string): 设备别名或 IP:端口，留空使用默认设备
     """
         if err := self._guard_tool(event):
@@ -1963,16 +2013,27 @@ Args:
             pkg = await self._resolve_package(serial, str(app or ""))
             if not pkg:
                 yield (
-                    f"无法识别应用「{app}」。可调用 ruying_list_apps 查看包名，"
-                    "或使用常见应用名（微信/QQ/抖音/B站/淘宝/支付宝/京东/拼多多/美团/高德地图/网易云音乐/小红书/微博/知乎/设置）。"
+                    f"无法识别应用「{app}」。可调用 ruying_list_apps 查看包名"
+                    "（系统/预装应用需传 include_system=true，如浏览器、相机），"
+                    "或使用常见应用名（微信/QQ/抖音/B站/淘宝/支付宝/浏览器/Edge/Chrome/设置）。"
                 )
                 return
-            out = await self.adb.launch_app(serial, pkg)
+            sent, detail = await self._launch_activity(serial, pkg)
             self._mark_op(serial)
-            if "error" in out.lower() or "no activities" in out.lower():
-                yield f"启动 {pkg} 失败：{out[:200]}"
+            if not sent:
+                yield (
+                    f"启动 {pkg} 失败：{detail}。"
+                    "可换用桌面图标方式：ruying_screenshot 找到图标位置后 ruying_tap 点击。"
+                )
+                return
+            if await self._verify_launch(serial, pkg):
+                yield f"已启动 {pkg}（前台已确认）。"
             else:
-                yield f"已启动 {pkg}。可用 ruying_screenshot 或 ruying_current_app 确认。"
+                yield (
+                    f"已向 {pkg} 发送启动命令，但暂未在前台确认到它（部分系统启动慢或被桌面拦截）。"
+                    "可用 ruying_screenshot 或 ruying_current_app 查看；"
+                    "也可改用桌面图标点击：ruying_screenshot 找到图标后 ruying_tap。"
+                )
         except AdbError as ex:
             yield f"启动失败：{ex}"
 
@@ -2044,7 +2105,7 @@ Args:
 
     @filter.llm_tool(name="ruying_auto")
     async def tool_auto(self, event: AstrMessageEvent, task: str = "", device: str = ""):
-        """把一个需要多步操作的安卓设备任务交给「如影」子 agent 自主完成（它会看屏、点击、输入并自己确认结果），只返回最终结果。适用于无法一步完成的复杂任务，例如「打开B站搜索如影并进入第一个视频」「在设置里打开开发者选项」。单步操作（仅截图/仅点一下）请不要用本工具，直接用对应工具即可。
+        """把一个需要多步操作的安卓设备任务交给「如影」子 agent 自主完成（它会看屏、点击、输入并自己确认结果），只返回最终结果。适用于无法一步完成的复杂任务，例如「打开B站搜索如影并进入第一个视频」「在设置里打开开发者选项」。单步操作（仅截图/仅点一下）请不要用本工具，直接用对应工具即可。平台对单次工具调用有时长上限（默认约 300 秒），超大任务请拆成多个小任务分派。
 
 Args:
         task(string): 要完成的任务的清晰描述（越具体越好，如「打开微信，进入扫码界面」）

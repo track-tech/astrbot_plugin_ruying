@@ -57,6 +57,32 @@ KEYCODES = {
     "相机": "KEYCODE_CAMERA",
 }
 
+# 泛称应用名（如「浏览器」）→ 按序探测实际安装的候选包（含系统预装）
+GENERIC_APP_ALIASES = {
+    "浏览器": [
+        "com.heytap.browser", "com.coloros.browser", "com.android.browser",
+        "com.android.chrome", "com.microsoft.emmx", "org.mozilla.firefox",
+        "com.huawei.browser", "com.hihonor.browser", "com.vivo.browser",
+        "com.mi.globalbrowser", "com.sec.android.app.sbrowser", "com.quark.browser",
+    ],
+    "browser": [
+        "com.android.chrome", "com.microsoft.emmx", "org.mozilla.firefox",
+        "com.heytap.browser", "com.coloros.browser", "com.android.browser",
+    ],
+    "相机": [
+        "com.android.camera", "com.oplus.camera", "com.onecamera",
+        "com.coloros.camera", "com.huawei.camera",
+    ],
+    "计算器": [
+        "com.android.calculator2", "com.coloros.calculator", "com.oneplus.calculator",
+        "com.huawei.calculator",
+    ],
+    "文件管理": [
+        "com.heytap.filemanager", "com.coloros.filemanager", "com.android.filemanager",
+        "com.huawei.hidisk",
+    ],
+}
+
 # 常用中文应用名 → 包名（找不到时仍会尝试模糊匹配包名）
 COMMON_APPS = {
     "微信": "com.tencent.mm",

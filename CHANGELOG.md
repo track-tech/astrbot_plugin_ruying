@@ -3,6 +3,22 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.0] - 2026-09-13
+
+### 修复（真机长任务实测反馈）
+- 启动应用重构：优先 `cmd package resolve-activity` + `am start` 并轮询前台确认；
+  ColorOS 的 monkey 为精简魔改版（逐参数回显、输出非标准），降级为回退路径，
+  静默无效时如实返回「未确认前台」并给出桌面图标点击的替代方案
+- 「浏览器」「相机」「计算器」「文件管理」等泛称自动探测实际安装的候选包
+  （含系统预装应用，覆盖 ColorOS/华为/小米/vivo/三星等常见品牌）
+- `ruying_list_apps` 新增 `include_system` 参数：浏览器等系统/预装应用默认不列出，
+  查找它们时需传 true（工具描述已引导模型）
+- `ruying_wait_for` 默认超时 5000ms → 8000ms（页面加载普遍偏慢）
+
+### 文档
+- FAQ 新增：子 agent 长任务被平台单次工具调用超时（默认约 300 秒）截断的调优方法
+  （调大 AstrBot 的 tool_call_timeout、拆分任务粒度）；中文输入需安装 ADBKeyboard 的说明
+
 ## [0.3.14] - 2026-09-13
 
 ### 修复（发布完整性）

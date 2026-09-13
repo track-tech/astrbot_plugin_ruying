@@ -1,6 +1,15 @@
 """如影（astrbot_plugin_ruying）核心逻辑包。"""
 
-from .adb import Adb, AdbError, COMMON_APPS, KEYCODES, describe_state, is_ip_port, split_ip_port
+from .adb import (
+    Adb,
+    AdbError,
+    COMMON_APPS,
+    GENERIC_APP_ALIASES,
+    KEYCODES,
+    describe_state,
+    is_ip_port,
+    split_ip_port,
+)
 from .devices import DeviceRegistry
 from .screen import format_ui_text, parse_ui_hierarchy, png_dimensions
 from .safety import is_admin, op_allowed, whitelisted
@@ -9,6 +18,7 @@ __all__ = [
     "Adb",
     "AdbError",
     "COMMON_APPS",
+    "GENERIC_APP_ALIASES",
     "KEYCODES",
     "DeviceRegistry",
     "describe_state",

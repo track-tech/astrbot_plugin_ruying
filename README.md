@@ -80,7 +80,7 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 - `ruying_screenshot` —— 截屏。默认降采样为长边 720 的 JPEG 回传给模型（本地保留原始 PNG），支持 `region` 局部截图、`digest` 纯文字摘要、无变化自动去重；配置 `enable_vision` 开启且模型支持视觉时图片直接注入 LLM 上下文。
 - `ruying_get_ui` —— 读取当前界面可交互元素的**精确坐标/文字/资源 ID**（uiautomator），支持 `max_nodes` 数量上限与 `filter_kw` 关键词过滤。这是点击定位的首选。
 - `ruying_tap_and_wait` —— 点击后轮询等待界面稳定，直接返回变化摘要（新增/消失元素）与当前界面，**无需再截图**。
-- `ruying_wait_for` —— 轮询等待指定文字/资源 ID 出现（如页面加载完成），出现即返回，**替代反复截图**。
+- `ruying_wait_for` —— 轮询等待指定文字/资源 ID 出现（如页面加载完成，默认等 8 秒），出现即返回，**替代反复截图**。
 - `ruying_tap` / `ruying_swipe` / `ruying_input_text` / `ruying_press_key` —— 触控与输入。
 - `ruying_current_app` / `ruying_list_apps` / `ruying_launch_app` —— 应用查询与启动。
 - `ruying_pull_file` —— 从设备拉取文件发送到会话。
@@ -131,6 +131,8 @@ AstrBot 插件——通过**无线 ADB**（Android 11+ 无线调试，无需 USB
 - **重启手机/重开无线调试后连不上？** 端口变了。保持 `auto_reconnect` 开启（mDNS 自动重发现），或重新 `/如影 connect`。
 - **`ruying_get_ui` 返回空元素？** 目标应用禁止辅助功能读取（游戏、部分视频页）。改用 `ruying_screenshot` 让模型按截图估算坐标。
 - **截图一片黑？** 熄屏导致的黑屏已由 `auto_wake` 自动处理（v0.3.6 起）；剩余场景是部分应用（银行/视频 DRM）主动禁止截屏，属系统层面限制。
+- **子 agent 长任务做到一半被截断？** 平台对单次工具调用有超时上限（默认约 300 秒）。在 AstrBot 配置中调大 `tool_call_timeout`，或把大任务拆成多个小任务分派。
+- **中文输入不动？** 安装 [ADBKeyBoard](https://github.com/senzhk/ADBKeyBoard) 并设为当前输入法后自动生效；临时方案是让模型改输英文或 URL。
 - **改了 adb_path 还是报「找不到 adb：adb」？** 生效时机分三种：① WebUI 插件配置里修改并保存 → **立即生效**（v0.3.4 起惰性读取，无需重载）；② 手改配置文件（data/config/xxx_config.json）→ 需重载插件；③ 若重载发生在**同一轮对话进行中**，该轮使用的工具集在开始时已快照、仍指向旧插件实例（AstrBot 核心层行为），新开一轮对话即恢复。
 - **模型看不到截图？** 需要同时满足：`enable_vision` 开启 + 使用多模态模型 + AstrBot 版本支持工具图片注入。不满足时自动降级为“图片发给用户 + 文字给模型”。
 
