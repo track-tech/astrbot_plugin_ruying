@@ -3,6 +3,17 @@
 所有重要变更记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.3.12] - 2026-09-13
+
+### 重构（隐身模式 v2：真·背光关闭）
+- 采用 scrcpy `--turn-screen-off` 同原理：插件自带 `screen_tool.jar`（1.9KB），
+  push 到设备后经 `app_process` 反射调用 `SurfaceControl.setDisplayPowerMode()`，
+  在 **SurfaceFlinger 层直接关闭背光**——不触发睡眠、不弹锁屏、系统与触控照常运行，
+  在 ColorOS 等封锁 WRITE_SETTINGS 的系统上同样可用（真机 PDEM10/Android 13 实测通过：
+  黑屏下触控注入、uiautomator、截图全部正常）
+- 隐身期间 `_ensure_awake` 保持黑屏：设备真睡眠则唤醒并重新压黑，绝不明亮
+- 旧 settings 亮度路线降级为 jar 不可用时的回退；两条路全被拒时仍返回手动授权指引
+
 ## [0.3.11] - 2026-09-13
 
 ### 新增（隐身模式）

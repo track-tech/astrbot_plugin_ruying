@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
     _HAS_FILE = False
 
 PLUGIN_NAME = "astrbot_plugin_ruying"
-PLUGIN_VERSION = "0.3.11"
+PLUGIN_VERSION = "0.3.12"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -182,7 +182,7 @@ class RuyingPlugin(Star):
         self._ops_since_shot: dict[str, int] = {}
         logger.info(f"[如影] 插件已加载，数据目录：{self.data_dir}")
     async def terminate(self):
-        """插件卸载：尽力恢复隐身模式改动的亮度，避免用户手机一直黑屏。"""
+        """插件卸载：尽力恢复隐身模式（重新点亮屏幕），避免用户手机一直黑屏。"""
         try:
             st = self._stealth_load()
             for serial in list(st.keys()):
@@ -193,6 +193,20 @@ class RuyingPlugin(Star):
     # ------------------------------------------------------------------
     # 隐身模式：亮度置 0 的"息屏操作"
     # ------------------------------------------------------------------
+    async def _jar_power(self, serial: str, action: str) -> tuple[bool, str]:
+        """推送并执行 screen_tool.jar：SurfaceFlinger 层开关背光（scrcpy -S 同原理）。"""
+        jar_local = os.path.join(_PLUGIN_DIR, "assets", "screen_tool.jar")
+        if not os.path.exists(jar_local):
+            return False, "screen_tool.jar 缺失"
+        await self.adb.push(serial, jar_local, "/data/local/tmp/ruying_screen.jar", timeout=30)
+        out = await self.adb.shell(
+            serial, "CLASSPATH=/data/local/tmp/ruying_screen.jar", "app_process",
+            "/", "com.ruying.ScreenTool", action, timeout=15,
+        )
+        if not out.startswith("OK"):
+            return False, out[:150]
+        return True, out.strip()
+
     def _stealth_path(self) -> str:
         return os.path.join(self.data_dir, "stealth.json")
 
@@ -240,8 +254,24 @@ class RuyingPlugin(Star):
         if on:
             if st.get(serial, {}).get("active"):
                 return True, "隐身模式已处于开启状态。"
+            # 路线 0：SurfaceFlinger 层关背光（scrcpy -S 同原理，真·黑屏且不触发锁屏）
+            jar_ok = False
+            try:
+                await self.adb.shell(serial, "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
+                await asyncio.sleep(0.8)
+                jar_ok, jar_msg = await self._jar_power(serial, "off")
+            except AdbError as ex:
+                jar_msg = str(ex)
+            if jar_ok:
+                st[serial] = {"active": True, "method": "sf"}
+                self._stealth_save(st)
+                return True, (
+                    "隐身模式已开启：背光已在 SurfaceFlinger 层关闭（真·黑屏），"
+                    "系统与触控正常运行，截屏/看屏不受影响。"
+                    "发送 /如影 stealth off 恢复亮屏。"
+                )
             orig_state = await self._read_brightness_state(serial)
-            orig = {"active": True, "state": orig_state}
+            orig = {"active": True, "method": "settings", "state": orig_state}
             for key in ("screen_brightness", "screen_brightness_mode", "screen_brightness_float"):
                 try:
                     orig[key] = await self.adb.shell(
@@ -311,6 +341,12 @@ class RuyingPlugin(Star):
         self._stealth_save(st)
         if not saved or not saved.get("active"):
             return True, "隐身模式本来就没有开启。"
+        if saved.get("method") == "sf":
+            try:
+                await self._jar_power(serial, "on")
+                return True, "已关闭隐身模式：屏幕已点亮。"
+            except AdbError as ex:
+                return False, f"点亮屏幕失败：{ex}（可重试 /如影 stealth off，或手动按电源键）"
         try:
             for key in ("screen_brightness_mode", "screen_brightness", "screen_brightness_float"):
                 val = saved.get(key, "")
@@ -554,6 +590,18 @@ class RuyingPlugin(Star):
         熄屏状态下截屏是纯黑图、控件 dump 也只是锁屏内容，因此屏幕相关操作前调用。
         若设备设置了锁屏密码，唤醒后只能到锁屏页——由 LLM 看图后告知用户，无法也不应远程绕过。
         """
+        if self._stealth_load().get(serial, {}).get("active"):
+            # 隐身模式：保持黑屏（背光关闭）才是正确状态。
+            # 设备若被系统真正睡眠（touch 失效）则唤醒并重新压黑；否则什么都不做。
+            try:
+                power = await self.adb.shell(serial, "dumpsys power", timeout=10)
+                if "mWakefulness=Asleep" in power:
+                    await self.adb.shell(serial, "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
+                    await asyncio.sleep(0.8)
+                await self._jar_power(serial, "off")
+            except AdbError:
+                pass
+            return
         if not bool(self._cfg("auto_wake", True)):
             return
         try:
